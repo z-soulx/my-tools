@@ -104,10 +104,34 @@ jobs:
         with:
           path: artifacts
 
+      - name: Prepare release files
+        shell: bash
+        run: |
+          mkdir -p release-files
+          for dir in artifacts/SkyTrace-full-*/; do
+            label=$(basename "$dir" | sed 's/SkyTrace-full-//')
+            find "$dir" -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.app" \) | while read f; do
+              name=$(basename "$f")
+              ext="${name##*.}"
+              base="${name%.*}"
+              cp "$f" "release-files/${base}-${label}.${ext}"
+            done
+          done
+          for dir in artifacts/SkyTrace-snapshot-*/; do
+            label=$(basename "$dir" | sed 's/SkyTrace-snapshot-//')
+            find "$dir" -type f \( -name "*.dmg" -o -name "*.exe" -o -name "*.app" \) | while read f; do
+              name=$(basename "$f")
+              ext="${name##*.}"
+              base="${name%.*}"
+              cp "$f" "release-files/${base}-snapshot-${label}.${ext}"
+            done
+          done
+          ls -la release-files/
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.version }}
           name: SkyTrace ${{ inputs.version }}
           draft: true
-          files: artifacts/**/*
+          files: release-files/*
