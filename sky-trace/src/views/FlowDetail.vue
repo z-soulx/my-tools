@@ -7,10 +7,11 @@ import type {
   TraceFlow, TraceNode, NodeExecResult, DynamicParam,
   SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, FieldBinding,
 } from "@/types";
-import { resolveBinding, resolveRelativeTime } from "@/types";
+import { resolveBinding, resolveRelativeTime, extractTemplateParams } from "@/types";
 import NodeEditor from "@/components/NodeEditor.vue";
 import NodeResult from "@/components/NodeResult.vue";
 import DynamicParamEditor from "@/components/DynamicParamEditor.vue";
+import FlowFormDialog from "@/components/FlowFormDialog.vue";
 import TimeRangeSelector from "@/components/TimeRangeSelector.vue";
 
 const route = useRoute();
@@ -44,6 +45,10 @@ const dragState = ref<{
 } | null>(null);
 const dropTarget = ref<number | null>(null);
 const nodeRefs = ref<HTMLElement[]>([]);
+const expandedNotes = ref<Record<string, boolean>>({});
+const expandedNodeContent = ref<Record<string, boolean>>({});
+const customInputKeys = ref<Record<string, boolean>>({});
+const showFlowInfoEditor = ref(false);
 
 const flowId = computed(() => Number(route.params.id));
 
@@ -65,9 +70,15 @@ const paramUsageMap = computed(() => {
     const cfg = node.config as SkynetQueryConfig;
     for (const [fieldLabel, fieldKey] of FIELD_LABELS) {
       const b = cfg[fieldKey] as FieldBinding | undefined;
-      if (b?.mode === "dynamic" && b.paramKey) {
+      if (!b) continue;
+      if (b.mode === "dynamic" && b.paramKey) {
         if (!map.has(b.paramKey)) map.set(b.paramKey, []);
         map.get(b.paramKey)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
+      } else if (b.mode === "template" && b.templateValue) {
+        for (const key of extractTemplateParams(b.templateValue)) {
+          if (!map.has(key)) map.set(key, []);
+          map.get(key)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
+        }
       }
     }
   }
@@ -85,8 +96,13 @@ const nodeParamMap = computed(() => {
     const entries: { key: string; label: string; field: string }[] = [];
     for (const [fieldLabel, fieldKey] of FIELD_LABELS) {
       const b = cfg[fieldKey] as FieldBinding | undefined;
-      if (b?.mode === "dynamic" && b.paramKey) {
+      if (!b) continue;
+      if (b.mode === "dynamic" && b.paramKey) {
         entries.push({ key: b.paramKey, label: paramLabelMap.get(b.paramKey) || b.paramKey, field: fieldLabel });
+      } else if (b.mode === "template" && b.templateValue) {
+        for (const key of extractTemplateParams(b.templateValue)) {
+          entries.push({ key, label: paramLabelMap.get(key) || key, field: fieldLabel });
+        }
       }
     }
     if (entries.length) map.set(node.id, entries);
@@ -123,6 +139,10 @@ onMounted(async () => {
     }
     flow.value!.dynamicParams.forEach((p: DynamicParam) => {
       dynamicValues.value[p.key] = p.defaultValue || "";
+      // 如果有默认值且不在预定义选项中，自动切换为自定义输入模式
+      if (p.options?.length && p.defaultValue && !matchesOption(p.options, p.defaultValue)) {
+        customInputKeys.value[p.key] = true;
+      }
     });
     flow.value!.nodes
       .filter((n) => n.type === "skynet_query")
@@ -239,6 +259,7 @@ async function pasteNodeAt(position: number) {
       label: data.label + " (粘贴)",
       sortOrder: position,
       config: data.config,
+      notes: data.notes,
     };
     flow.value?.nodes.splice(position, 0, node);
     flow.value?.nodes.forEach((n, i) => { n.sortOrder = i; });
@@ -261,8 +282,18 @@ async function saveDynamicParams(params: DynamicParam[]) {
   showParamEditor.value = false;
 }
 
+async function handleFlowInfoSaved(updated: TraceFlow) {
+  if (!flow.value) return;
+  flow.value.name = updated.name;
+  flow.value.description = updated.description;
+  flow.value.supplierId = updated.supplierId;
+  flow.value.tags = updated.tags;
+  showFlowInfoEditor.value = false;
+  store.refreshFlows();
+}
+
 async function copyNode(node: TraceNode) {
-  const data = { _type: "sky_trace_node", type: node.type, label: node.label, config: node.config };
+  const data = { _type: "sky_trace_node", type: node.type, label: node.label, config: node.config, notes: node.notes };
   await clipCopy(JSON.stringify(data, null, 2), `node_${node.id}`);
 }
 
@@ -277,6 +308,7 @@ async function pasteNode() {
       label: data.label + " (粘贴)",
       sortOrder: flow.value?.nodes.length ?? 0,
       config: data.config,
+      notes: data.notes,
     };
     flow.value?.nodes.push(node);
     await persistFlow();
@@ -294,7 +326,7 @@ async function exportFlow() {
     description: flow.value.description,
     tags: flow.value.tags,
     dynamicParams: flow.value.dynamicParams,
-    nodes: flow.value.nodes.map(({ type, label, config }) => ({ type, label, config })),
+    nodes: flow.value.nodes.map(({ type, label, config, notes }) => ({ type, label, config, notes })),
   };
   await clipCopy(JSON.stringify(data, null, 2), "flow_export");
 }
@@ -309,12 +341,13 @@ async function importFlow() {
       supplierId: flow.value?.supplierId ?? null,
       tags: data.tags || [],
       dynamicParams: data.dynamicParams || [],
-      nodes: (data.nodes || []).map((n: { type: string; label: string; config: unknown }, i: number) => ({
+      nodes: (data.nodes || []).map((n: { type: string; label: string; config: unknown; notes?: string }, i: number) => ({
         id: `node_${Date.now()}_${i}`,
         type: n.type,
         label: n.label,
         sortOrder: i,
         config: n.config,
+        notes: n.notes,
       })),
     });
     showImportDialog.value = false;
@@ -380,7 +413,7 @@ async function executeNodes(onlySelected = false) {
       filter1: resolveField(cfg.filter1),
       filter2: resolveField(cfg.filter2),
       indexContext: resolveField(cfg.indexContext),
-      contextId: resolveField(cfg.contextId ?? { mode: "fixed", fixedValue: "", paramKey: "" }),
+      contextId: resolveField(cfg.contextId ?? { mode: "fixed", fixedValue: "", paramKey: "", templateValue: "" }),
       pageSize: cfg.pageSize,
       beginTime: resolvedBegin,
       endTime: resolvedEnd,
@@ -398,7 +431,7 @@ async function executeNodes(onlySelected = false) {
         filter1: resolveField(cfg.filter1),
         filter2: resolveField(cfg.filter2),
         indexContext: resolveField(cfg.indexContext),
-        contextId: resolveField(cfg.contextId ?? { mode: "fixed", fixedValue: "", paramKey: "" }),
+        contextId: resolveField(cfg.contextId ?? { mode: "fixed", fixedValue: "", paramKey: "", templateValue: "" }),
         beginTime: timeFrom.value,
         endTime: timeTo.value,
       });
@@ -455,6 +488,36 @@ function healthIcon(health: string) {
 function nodeTypeLabel(type: string) {
   return type === "skynet_query" ? "天网查询" : type === "checklist" ? "Checklist" : type === "info" ? "信息" : "链接";
 }
+
+function toggleNotes(nodeId: string) {
+  expandedNotes.value[nodeId] = !expandedNotes.value[nodeId];
+}
+
+function toggleNodeContent(nodeId: string) {
+  expandedNodeContent.value[nodeId] = !expandedNodeContent.value[nodeId];
+}
+
+/** 解析选项 "value|label" 格式，无 | 则 value = label */
+function parseOption(opt: string): { value: string; label: string } {
+  const idx = opt.indexOf("|");
+  if (idx >= 0) return { value: opt.slice(0, idx), label: opt.slice(idx + 1) };
+  return { value: opt, label: opt };
+}
+
+/** 判断当前值是否匹配某个选项的 value */
+function matchesOption(options: string[], val: string): boolean {
+  return options.some((opt) => parseOption(opt).value === val);
+}
+
+function onOptionSelect(paramKey: string, value: string) {
+  if (value === "__custom__") {
+    customInputKeys.value[paramKey] = true;
+    dynamicValues.value[paramKey] = "";
+  } else {
+    customInputKeys.value[paramKey] = false;
+    dynamicValues.value[paramKey] = value;
+  }
+}
 </script>
 
 <template>
@@ -465,8 +528,20 @@ function nodeTypeLabel(type: string) {
         <div class="flex items-center gap-3">
           <button class="text-text-secondary hover:text-text" @click="router.push('/flows')">← 返回</button>
           <div>
-            <h2 class="text-xl font-semibold">{{ flow.name }}</h2>
+            <div class="flex items-center gap-2">
+              <h2 class="text-xl font-semibold">{{ flow.name }}</h2>
+              <button
+                v-if="!store.snapshotMode"
+                class="text-xs text-text-secondary/50 hover:text-primary transition-colors"
+                title="编辑基本信息"
+                @click="showFlowInfoEditor = true"
+              >✏️</button>
+            </div>
             <p v-if="flow.description" class="text-sm text-text-secondary">{{ flow.description }}</p>
+            <div v-if="flow.tags.length || flow.supplierId" class="flex items-center gap-1.5 mt-1">
+              <span v-if="flow.supplierId" class="text-[10px] px-1.5 py-0.5 bg-green-50 text-green-700 rounded">{{ store.supplierMap.get(flow.supplierId)?.name }}</span>
+              <span v-for="tag in flow.tags" :key="tag" class="text-[10px] px-1.5 py-0.5 bg-surface-alt text-text-secondary rounded">{{ tag }}</span>
+            </div>
           </div>
         </div>
         <div v-if="!store.snapshotMode || !store.snapshotRestrictions.hideEdit" class="flex bg-surface-alt rounded-lg p-0.5">
@@ -493,11 +568,47 @@ function nodeTypeLabel(type: string) {
             <label class="block text-xs text-text-secondary mb-1">
               {{ param.label }} <span v-if="param.required" class="text-error">*</span>
             </label>
+            <!-- 有 options 且不允许自定义：纯 select -->
+            <select
+              v-if="param.options?.length && param.allowCustom === false"
+              v-model="dynamicValues[param.key]"
+              class="w-full px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+            >
+              <option value="" disabled>请选择</option>
+              <option v-for="opt in param.options" :key="opt" :value="parseOption(opt).value">{{ parseOption(opt).label }}</option>
+            </select>
+            <!-- 有 options 且允许自定义：select + 自定义切换 -->
+            <template v-else-if="param.options?.length">
+              <select
+                v-if="!customInputKeys[param.key]"
+                :value="matchesOption(param.options, dynamicValues[param.key]) ? dynamicValues[param.key] : ''"
+                class="w-full px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+                @change="onOptionSelect(param.key, ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="" disabled>请选择</option>
+                <option v-for="opt in param.options" :key="opt" :value="parseOption(opt).value">{{ parseOption(opt).label }}</option>
+                <option value="__custom__">自定义...</option>
+              </select>
+              <div v-else class="flex gap-1">
+                <input
+                  v-model="dynamicValues[param.key]"
+                  :placeholder="param.defaultValue || '自定义输入'"
+                  class="flex-1 px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+                />
+                <button
+                  class="shrink-0 px-2 text-xs text-text-secondary hover:text-primary border border-border rounded-lg"
+                  @click="customInputKeys[param.key] = false"
+                >选项</button>
+              </div>
+            </template>
+            <!-- 无 options：普通 input -->
             <input
+              v-else
               v-model="dynamicValues[param.key]"
               :placeholder="param.defaultValue || param.label"
               class="w-full px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
             />
+            <p v-if="param.hint" class="mt-0.5 text-[10px] text-text-secondary/70 whitespace-pre-wrap">{{ param.hint }}</p>
             <div v-if="paramUsageMap.get(param.key)?.length" class="mt-1 flex flex-wrap gap-1">
               <span
                 v-for="u in paramUsageMap.get(param.key)"
@@ -600,20 +711,55 @@ function nodeTypeLabel(type: string) {
               >{{ p.field }} ← {{ p.label }}</span>
             </div>
           </div>
+          <!-- 可折叠参考信息 -->
+          <div v-if="node.notes || (node.type === 'skynet_query' && Object.values((node.config as SkynetQueryConfig).fieldHints ?? {}).some(v => v))" class="px-4 py-2 border-b border-border/50 bg-amber-50/30">
+            <button
+              class="flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900"
+              @click="toggleNotes(node.id)"
+            >
+              <span>{{ expandedNotes[node.id] ? '▾' : '▸' }}</span>
+              参考信息
+            </button>
+            <div v-if="expandedNotes[node.id]" class="mt-2 space-y-2">
+              <div v-if="node.notes" class="text-xs text-text-secondary whitespace-pre-wrap leading-relaxed">{{ node.notes }}</div>
+              <template v-if="node.type === 'skynet_query'">
+                <div
+                  v-for="[hintLabel, hintKey] in ([['Filter1', 'filter1'], ['Filter2', 'filter2'], ['Msg 模糊查询', 'indexContext'], ['TraceId', 'contextId']] as const)"
+                  :key="hintKey"
+                >
+                  <div v-if="(node.config as SkynetQueryConfig).fieldHints?.[hintKey]" class="flex items-start gap-1.5 text-[11px]">
+                    <span class="text-amber-600 font-medium shrink-0">{{ hintLabel }}:</span>
+                    <span class="text-text-secondary">{{ (node.config as SkynetQueryConfig).fieldHints![hintKey] }}</span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
           <NodeResult
-            v-if="execResults[node.id]"
+            v-if="execResults[node.id] && node.type === 'skynet_query'"
             :node="node"
             :result="execResults[node.id]"
             :global-search="globalSearch"
             :force-expand="allExpanded"
           />
-          <div v-else-if="node.type === 'info'" class="px-4 py-3">
-            <p class="text-sm text-text-secondary whitespace-pre-wrap">{{ (node.config as InfoNodeConfig).content }}</p>
-            <div v-if="(node.config as InfoNodeConfig).links?.length" class="mt-2 flex flex-wrap gap-2">
-              <a v-for="(link, i) in (node.config as InfoNodeConfig).links" :key="i" :href="link.url" target="_blank" class="text-xs text-primary hover:underline">{{ link.label }} ↗</a>
+          <div v-else-if="node.type === 'info'">
+            <button class="w-full px-4 py-2 flex items-center gap-1 text-xs text-text-secondary hover:bg-surface-alt transition-colors" @click="toggleNodeContent(node.id)">
+              <span>{{ expandedNodeContent[node.id] ? '▾' : '▸' }}</span>
+              信息内容
+            </button>
+            <div v-if="expandedNodeContent[node.id]" class="px-4 pb-3">
+              <p class="text-sm text-text-secondary whitespace-pre-wrap">{{ (node.config as InfoNodeConfig).content }}</p>
+              <div v-if="(node.config as InfoNodeConfig).links?.length" class="mt-2 flex flex-wrap gap-2">
+                <a v-for="(link, i) in (node.config as InfoNodeConfig).links" :key="i" :href="link.url" target="_blank" class="text-xs text-primary hover:underline">{{ link.label }} ↗</a>
+              </div>
             </div>
           </div>
-          <div v-else-if="node.type === 'checklist'" class="px-4 py-3">
+          <div v-else-if="node.type === 'checklist'">
+            <button class="w-full px-4 py-2 flex items-center gap-1 text-xs text-text-secondary hover:bg-surface-alt transition-colors" @click="toggleNodeContent(node.id)">
+              <span>{{ expandedNodeContent[node.id] ? '▾' : '▸' }}</span>
+              检查项
+            </button>
+            <div v-if="expandedNodeContent[node.id]" class="px-4 pb-3">
             <template v-if="store.checklistMap.get((node.config as ChecklistNodeConfig).checklistGroupId)">
               <div
                 v-for="item in (
@@ -640,6 +786,7 @@ function nodeTypeLabel(type: string) {
               </div>
             </template>
             <p v-else class="text-sm text-text-secondary">Checklist 分组未找到</p>
+            </div>
           </div>
         </div>
       </div>
@@ -721,7 +868,10 @@ function nodeTypeLabel(type: string) {
                 <span class="text-text-secondary text-xs text-center w-5">{{ index + 1 }}</span>
               </div>
               <div class="min-w-0">
-                <div class="font-medium text-sm">{{ node.label }}</div>
+                <div class="font-medium text-sm">
+                  {{ node.label }}
+                  <span v-if="node.notes" class="text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded ml-1" title="有参考备注">备注</span>
+                </div>
                 <div class="text-xs text-text-secondary mt-0.5">
                   {{ nodeTypeLabel(node.type) }}
                   <template v-if="node.type === 'skynet_query'">
@@ -775,6 +925,14 @@ function nodeTypeLabel(type: string) {
       :params="flow.dynamicParams"
       @close="showParamEditor = false"
       @save="saveDynamicParams"
+    />
+
+    <FlowFormDialog
+      v-if="showFlowInfoEditor"
+      :source-flow="flow"
+      :edit-mode="true"
+      @close="showFlowInfoEditor = false"
+      @saved="handleFlowInfoSaved"
     />
 
     <!-- 导入链路弹窗 -->

@@ -26,15 +26,19 @@ export interface DynamicParam {
   label: string;
   required: boolean;
   defaultValue: string;
+  hint?: string;
+  options?: string[];
+  allowCustom?: boolean;
 }
 
 /**
  * 节点中某个字段如何取值：固定值 or 绑定动态参数
  */
 export interface FieldBinding {
-  mode: "fixed" | "dynamic";
+  mode: "fixed" | "dynamic" | "template";
   fixedValue: string;
   paramKey: string; // 绑定的 DynamicParam.key
+  templateValue?: string; // 模板字符串，如 "inc_{{hotel}}"
 }
 
 export interface ChecklistSubItem {
@@ -70,6 +74,7 @@ export interface TraceNode {
   label: string;
   sortOrder: number;
   config: SkynetQueryConfig | InfoNodeConfig | LinkNodeConfig | ChecklistNodeConfig;
+  notes?: string;
 }
 
 /**
@@ -86,6 +91,7 @@ export interface SkynetQueryConfig {
   indexContext: FieldBinding;
   contextId: FieldBinding;
   pageSize: number;
+  fieldHints?: Record<string, string>;
 }
 
 export interface InfoNodeConfig {
@@ -226,11 +232,28 @@ export function resolveBinding(
   dynamicValues: Record<string, string>
 ): string {
   if (binding.mode === "fixed") return binding.fixedValue;
+  if (binding.mode === "template") {
+    return (binding.templateValue ?? "").replace(
+      /\{\{(\w+)\}\}/g,
+      (_, key) => dynamicValues[key] ?? ""
+    );
+  }
   return dynamicValues[binding.paramKey] ?? "";
 }
 
 export function emptyBinding(): FieldBinding {
-  return { mode: "fixed", fixedValue: "", paramKey: "" };
+  return { mode: "fixed", fixedValue: "", paramKey: "", templateValue: "" };
+}
+
+/** 从模板字符串中提取所有 {{key}} 引用的参数 key */
+export function extractTemplateParams(tpl: string): string[] {
+  const keys: string[] = [];
+  const re = /\{\{(\w+)\}\}/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(tpl)) !== null) {
+    if (!keys.includes(m[1])) keys.push(m[1]);
+  }
+  return keys;
 }
 
 /** 将 "now-30m" 等相对时间解析为绝对时间字符串 yyyy-MM-dd HH:mm:ss.SSS */

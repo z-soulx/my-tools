@@ -41,11 +41,11 @@ sky-trace/
 │   ├── components/               # 通用组件
 │   │   ├── Sidebar.vue           # 左侧导航
 │   │   ├── FlowCard.vue          # 链路卡片
-│   │   ├── FlowFormDialog.vue    # 新建/复制链路弹窗
-│   │   ├── NodeEditor.vue        # 节点编辑器
+│   │   ├── FlowFormDialog.vue    # 新建/复制/编辑链路弹窗
+│   │   ├── NodeEditor.vue        # 节点编辑器（含参考备注、字段提示）
 │   │   ├── NodeResult.vue        # 节点查询结果展示
-│   │   ├── DynamicParamEditor.vue# 动态参数编辑器
-│   │   ├── FieldBindingInput.vue # 字段绑定输入（固定值/动态参数）
+│   │   ├── DynamicParamEditor.vue# 动态参数编辑器（搜索、排序、选项）
+│   │   ├── FieldBindingInput.vue # 字段绑定输入（固定值/动态参数/模板）
 │   │   ├── TimeRangeSelector.vue # 时间范围下拉选择器
 │   │   ├── HighlightText.vue     # 搜索高亮文本
 │   │   └── SnapshotExportDialog.vue # 快照导出弹窗
@@ -84,9 +84,14 @@ sky-trace/
 
 每条链路 (TraceFlow) 包含:
 
-- **基础信息**: 名称、描述、关联供应商、标签
-- **动态参数**: 执行时由用户填写的变量 (如酒店 ID)，可绑定到节点的 Filter1/Filter2/模糊查询/TraceId
-- **节点列表**: 按顺序排列，支持拖拽排序
+- **基础信息**: 名称、描述、关联供应商、标签（创建后可随时编辑）
+- **动态参数**: 执行时由用户填写的变量 (如酒店 ID)，支持提示信息（多行）、预定义选项（`值|显示名` 格式）、允许自定义输入开关
+- **字段绑定**: 节点的 Filter1/Filter2/模糊查询/TraceId 支持三种绑定模式：
+  - **固定值**: 直接填写固定字符串
+  - **绑定参数**: 绑定一个动态参数，执行时取用户填入的值
+  - **模板**: 混合固定文本和动态参数，如 `inc_{{hotel}}`，使用 `{{参数名}}` 语法
+- **节点列表**: 按顺序排列，支持拖拽排序，每个节点可附加参考备注
+- **字段提示**: 天网查询节点的每个过滤字段可配置参考提示信息（如"三要素拼接 id_room_rpid"）
 
 节点类型:
 
@@ -101,7 +106,10 @@ sky-trace/
 - **全部执行**: 所有 `skynet_query` 节点同时发起 API 请求
 - **选定执行**: 通过 checkbox 勾选目标节点，仅执行选中部分
 - 全局时间范围选择（预设/自定义）
-- 动态参数填值 → 自动注入到绑定的节点字段
+- 动态参数填值 → 自动注入到绑定的节点字段（含模板插值）
+- 参数输入支持：纯文本、下拉选择（`值|显示名` 格式）、带自定义的下拉
+- 参数提示信息（多行）展示在输入框下方
+- 参数引用追踪：显示每个参数被哪些节点的哪个字段引用
 - 结果按健康度着色: 🟢 正常 / 🟡 有 ERROR / 🔴 无数据
 - 每个节点提供「天网 UI ↗」跳转链接
 
@@ -153,7 +161,9 @@ sky-trace/
 ### 8. 其他功能
 
 - **供应商管理**: 按供应商维度组织排查链路
+- **链路信息编辑**: 创建后可随时修改名称、描述、供应商、标签
 - **链路复制**: 复制时弹出编辑弹窗，可修改基础信息
+- **动态参数管理**: 搜索、排序（▲▼箭头 + 手动输入位置）、预定义选项、提示信息
 - **节点复制/粘贴**: JSON 格式，精确选择插入位置
 - **链路导出/导入**: 完整链路 JSON 序列化
 - **回收站**: 软删除，可恢复或永久删除
@@ -340,11 +350,30 @@ SkyTrace-运营版/
 
 ## 数据库
 
-SQLite 文件存储在系统应用数据目录 (`tauri::path::app_data_dir`)。
+SQLite 文件存储在系统应用数据目录，**与应用二进制分离**，升级或重装不会丢失数据。
+
+| 系统 | 数据库路径 |
+|------|-----------|
+| macOS | `~/Library/Application Support/com.soulx.sky-trace/skytrace.db` |
+| Windows | `C:\Users\{用户}\AppData\Roaming\com.soulx.sky-trace\skytrace.db` |
+
+> `npm run tauri dev` 和编译版使用**同一个数据库**（相同 app identifier）。
 
 表结构: `sky_app`、`supplier`、`trace_flow`、`checklist_group`、`recovery_group`、`execution_history`
 
 删除操作为软删除 (`deleted_at` 字段)，可通过回收站恢复。
+
+### 数据备份与迁移
+
+```bash
+# 备份
+cp ~/Library/Application\ Support/com.soulx.sky-trace/skytrace.db ~/Desktop/skytrace-backup.db
+
+# 恢复或迁移到其他机器
+cp ~/Desktop/skytrace-backup.db ~/Library/Application\ Support/com.soulx.sky-trace/skytrace.db
+```
+
+将 `skytrace.db` 复制到另一台机器的相同路径，启动应用即可看到所有数据。
 
 ## 键盘快捷键
 

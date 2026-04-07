@@ -26,6 +26,7 @@ const filter2 = ref<FieldBinding>(emptyBinding());
 const indexContext = ref<FieldBinding>(emptyBinding());
 const contextId = ref<FieldBinding>(emptyBinding());
 const pageSize = ref(100);
+const fieldHints = ref<Record<string, string>>({});
 
 // InfoNodeConfig fields
 const infoContent = ref("");
@@ -35,10 +36,14 @@ const infoLinks = ref<{ label: string; url: string }[]>([]);
 const checklistGroupId = ref<number | undefined>();
 const checklistItemIds = ref<string[]>([]);
 
+// Common fields
+const notes = ref("");
+
 onMounted(() => {
   if (!props.node) return;
   nodeType.value = props.node.type;
   label.value = props.node.label;
+  notes.value = props.node.notes ?? "";
 
   if (props.node.type === "skynet_query") {
     const cfg = props.node.config as SkynetQueryConfig;
@@ -46,11 +51,12 @@ onMounted(() => {
     module_.value = cfg.module;
     category.value = cfg.category;
     subCategory.value = cfg.subCategory;
-    filter1.value = cfg.filter1 ?? emptyBinding();
-    filter2.value = cfg.filter2 ?? emptyBinding();
-    indexContext.value = cfg.indexContext ?? emptyBinding();
+    filter1.value = cfg.filter1;
+    filter2.value = cfg.filter2;
+    indexContext.value = cfg.indexContext;
     contextId.value = cfg.contextId ?? emptyBinding();
     pageSize.value = cfg.pageSize;
+    fieldHints.value = cfg.fieldHints ?? {};
   } else if (props.node.type === "info") {
     const cfg = props.node.config as InfoNodeConfig;
     infoContent.value = cfg.content;
@@ -94,6 +100,7 @@ function handleSave() {
       indexContext: indexContext.value,
       contextId: contextId.value,
       pageSize: pageSize.value,
+      fieldHints: Object.keys(fieldHints.value).some((k) => fieldHints.value[k]) ? fieldHints.value : undefined,
     } as SkynetQueryConfig;
   } else if (nodeType.value === "checklist") {
     config = {
@@ -113,6 +120,7 @@ function handleSave() {
     label: label.value,
     sortOrder: props.node?.sortOrder ?? 0,
     config,
+    notes: notes.value || undefined,
   });
 }
 
@@ -150,6 +158,11 @@ const saveDisabled = () => {
           <input v-model="label" placeholder="如：查 RMQ consume 日志" class="w-full px-3 py-2 border border-border rounded-lg text-sm outline-none focus:border-primary" />
         </div>
 
+        <div>
+          <label class="block text-sm font-medium mb-1">参考备注</label>
+          <textarea v-model="notes" rows="2" placeholder="排查参考信息，如错误码映射、注意事项等..." class="w-full px-3 py-2 border border-border rounded-lg text-sm outline-none focus:border-primary resize-none" />
+        </div>
+
         <template v-if="nodeType === 'skynet_query'">
           <div>
             <label class="block text-sm font-medium mb-1">天网应用 *</label>
@@ -175,10 +188,23 @@ const saveDisabled = () => {
           </div>
 
           <div class="space-y-3">
-            <FieldBindingInput label="Filter1" v-model="filter1" :dynamic-params="dynamicParams" />
-            <FieldBindingInput label="Filter2" v-model="filter2" :dynamic-params="dynamicParams" />
-            <FieldBindingInput label="Msg 模糊查询" v-model="indexContext" :dynamic-params="dynamicParams" />
-            <FieldBindingInput label="TraceId (contextId)" v-model="contextId" :dynamic-params="dynamicParams" />
+            <div v-for="[fieldLabel, fieldKey] in ([['Filter1', 'filter1'], ['Filter2', 'filter2'], ['Msg 模糊查询', 'indexContext'], ['TraceId (contextId)', 'contextId']] as const)" :key="fieldKey">
+              <FieldBindingInput
+                :label="fieldLabel"
+                :model-value="fieldKey === 'filter1' ? filter1 : fieldKey === 'filter2' ? filter2 : fieldKey === 'indexContext' ? indexContext : contextId"
+                @update:model-value="fieldKey === 'filter1' ? filter1 = $event : fieldKey === 'filter2' ? filter2 = $event : fieldKey === 'indexContext' ? indexContext = $event : contextId = $event"
+                :dynamic-params="dynamicParams"
+                :hint="fieldHints[fieldKey]"
+              />
+              <div class="ml-24 mt-1">
+                <input
+                  :value="fieldHints[fieldKey] ?? ''"
+                  @input="fieldHints[fieldKey] = ($event.target as HTMLInputElement).value"
+                  placeholder="参考提示 (可选)，如: 三要素拼接 id_room_rpid"
+                  class="w-full px-2 py-1 text-[11px] border border-dashed border-border rounded outline-none focus:border-amber-400 text-text-secondary"
+                />
+              </div>
+            </div>
           </div>
 
           <div>

@@ -77,6 +77,12 @@ pub struct DynamicParam {
     pub label: String,
     pub required: bool,
     pub default_value: String,
+    #[serde(default)]
+    pub hint: Option<String>,
+    #[serde(default)]
+    pub options: Option<Vec<String>>,
+    #[serde(default)]
+    pub allow_custom: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +96,8 @@ pub struct TraceNode {
     pub config: serde_json::Value,
     #[serde(default)]
     pub health_rules: Option<serde_json::Value>,
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

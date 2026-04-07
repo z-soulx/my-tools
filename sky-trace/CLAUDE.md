@@ -39,12 +39,35 @@ src/                      src-tauri/src/
 - Types in `src/types/index.ts`
 - Global state in `src/stores/app.ts` (Pinia)
 - Router uses `createWebHashHistory()` (required for Tauri WebView)
-- `FieldBinding` pattern: fields like filter1/filter2/indexContext/contextId can be `{ mode: "fixed", fixedValue }` or `{ mode: "dynamic", paramKey }` bound to flow-level DynamicParam
+- `FieldBinding` pattern: fields like filter1/filter2/indexContext/contextId can be `{ mode: "fixed", fixedValue }`, `{ mode: "dynamic", paramKey }` bound to flow-level DynamicParam, or `{ mode: "template", templateValue }` using `{{paramKey}}` interpolation syntax
 
 ### API Integration
 - Skynet API: `POST http://skynetapi.dss.17usoft.com/log/real/list`
 - Times must be absolute `yyyy-MM-dd HH:mm:ss.SSS` — frontend resolves relative expressions like `now-30m` before sending
 - UI link: `https://skyeye.17usoft.com/logs/realquery?app={appUk}&data={urlencoded JSON}`
+
+### DynamicParam enhancements
+- `DynamicParam` supports `hint` (multi-line tips shown at execution), `options` (predefined choices, format `value|label` or plain text), `allowCustom` (allow free input when options exist)
+- `DynamicParamEditor.vue` — compact expandable list with search, arrow reorder, manual position input ("移到第 X 位")
+- No HTML5 drag & drop (Tauri WebView compat issues) — use ▲▼ arrows or position input instead
+
+### FieldBinding template mode
+- Third mode `"template"` alongside `"fixed"` and `"dynamic"`
+- `templateValue` string with `{{paramKey}}` placeholders, e.g. `inc_{{hotel}}`
+- `resolveBinding()` handles template interpolation; `extractTemplateParams()` extracts referenced keys
+- `FieldBindingInput.vue` — three-tab UI (固定值/绑定参数/模板), clickable param tags for insertion
+- `paramUsageMap` computed in FlowDetail tracks template references
+
+### Node reference notes & field hints
+- `TraceNode.notes` — optional markdown-style reference text (e.g. error code mappings)
+- `SkynetQueryConfig.fieldHints` — `Record<string, string>` per-field hint text shown below bindings
+- Collapsible reference panel in execute mode (amber background)
+- `NodeEditor.vue` — notes textarea + per-field hint input below each FieldBindingInput
+
+### Flow info editing
+- `FlowFormDialog.vue` supports `editMode` prop — when true, updates existing flow (passes `id` to `saveFlow`)
+- `FlowDetail.vue` header shows edit button (✏️), tags, and supplier badge
+- Edit mode hides dynamic params section (managed separately via `DynamicParamEditor`)
 
 ## Common Tasks
 

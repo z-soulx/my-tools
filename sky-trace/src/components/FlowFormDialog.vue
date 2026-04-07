@@ -6,15 +6,17 @@ import type { DynamicParam, TraceFlow } from "@/types";
 
 const props = withDefaults(defineProps<{
   sourceFlow?: TraceFlow | null;
-}>(), { sourceFlow: null });
+  editMode?: boolean;
+}>(), { sourceFlow: null, editMode: false });
 
-const emit = defineEmits<{ close: []; saved: [] }>();
+const emit = defineEmits<{ close: []; saved: [flow: TraceFlow] }>();
 const store = useAppStore();
 
-const isEdit = !!props.sourceFlow;
+const isDuplicate = !!props.sourceFlow && !props.editMode;
+const isEdit = props.editMode && !!props.sourceFlow;
 
 const form = ref({
-  name: props.sourceFlow ? props.sourceFlow.name + " (副本)" : "",
+  name: isDuplicate ? (props.sourceFlow!.name + " (副本)") : (props.sourceFlow?.name ?? ""),
   description: props.sourceFlow?.description ?? "",
   supplierId: props.sourceFlow?.supplierId ?? null as number | null,
   tags: props.sourceFlow?.tags.join(", ") ?? "",
@@ -29,8 +31,11 @@ function addParam() {
   dynamicParams.value.push({
     key: "",
     label: "",
-    required: true,
+    required: false,
     defaultValue: "",
+    hint: "",
+    options: [],
+    allowCustom: true,
   });
 }
 
@@ -42,26 +47,34 @@ async function handleSave() {
   if (!form.value.name.trim()) return;
   saving.value = true;
   try {
-    await api.saveFlow({
+    const payload: Parameters<typeof api.saveFlow>[0] = {
       name: form.value.name.trim(),
       description: form.value.description.trim(),
       supplierId: form.value.supplierId,
       tags: form.value.tags.split(",").map((t) => t.trim()).filter(Boolean),
       dynamicParams: dynamicParams.value.filter((p) => p.key.trim() && p.label.trim()),
       nodes: props.sourceFlow ? props.sourceFlow.nodes : [],
-    });
-    emit("saved");
+    };
+    // Edit mode: pass id to update
+    if (isEdit && props.sourceFlow) {
+      payload.id = props.sourceFlow.id;
+    }
+    const saved = await api.saveFlow(payload);
+    emit("saved", saved);
   } finally {
     saving.value = false;
   }
 }
+
+const title = isEdit ? '编辑链路信息' : isDuplicate ? '复制链路 - 编辑基础信息' : '新建排查链路';
+const buttonText = isEdit ? '保存' : isDuplicate ? '复制并保存' : '创建';
 </script>
 
 <template>
   <div class="fixed inset-0 bg-black/40 flex items-center justify-center z-50" @click.self="emit('close')">
     <div class="bg-surface rounded-xl shadow-xl w-[520px] max-h-[85vh] overflow-y-auto">
       <div class="px-6 py-4 border-b border-border">
-        <h3 class="text-lg font-semibold">{{ isEdit ? '复制链路 - 编辑基础信息' : '新建排查链路' }}</h3>
+        <h3 class="text-lg font-semibold">{{ title }}</h3>
       </div>
 
       <div class="px-6 py-4 space-y-4">
@@ -89,8 +102,8 @@ async function handleSave() {
           </div>
         </div>
 
-        <!-- 动态参数 -->
-        <div>
+        <!-- 动态参数（仅新建/复制模式展示，编辑模式用 DynamicParamEditor） -->
+        <div v-if="!isEdit">
           <div class="flex items-center justify-between mb-2">
             <label class="text-sm font-medium">动态参数</label>
             <button class="text-xs text-primary hover:underline" @click="addParam">+ 添加</button>
@@ -113,7 +126,7 @@ async function handleSave() {
           class="px-4 py-2 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover disabled:opacity-50"
           :disabled="!form.name.trim() || saving"
           @click="handleSave"
-        >{{ saving ? '保存中...' : isEdit ? '复制并保存' : '创建' }}</button>
+        >{{ saving ? '保存中...' : buttonText }}</button>
       </div>
     </div>
   </div>
