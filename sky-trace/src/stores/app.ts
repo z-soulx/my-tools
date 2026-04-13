@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { SkyApp, Supplier, TraceFlow, ChecklistGroup, RecoveryGroup, SnapshotRestrictions, SnapshotData } from "@/types";
+import type { SkyApp, Supplier, TraceFlow, ChecklistGroup, RecoveryGroup, SnapshotRestrictions, SnapshotData, RemoteConfig } from "@/types";
 import * as api from "@/services/tauri";
 
 export const useAppStore = defineStore("app", () => {
@@ -28,6 +28,19 @@ export const useAppStore = defineStore("app", () => {
     hideDebug: true,
     hideUiLink: true,
   });
+
+  // Remote config state
+  const remoteConfig = ref<RemoteConfig | null>(null);
+  const remoteCheckFailed = ref(false);
+
+  const isRemoteLocked = computed(
+    () => remoteCheckFailed.value || remoteConfig.value?.enabled === false
+  );
+
+  function featureEnabled(key: string): boolean {
+    if (!remoteConfig.value) return false; // fail-closed: no config = disabled
+    return remoteConfig.value.features[key] !== false;
+  }
 
   const filteredFlows = computed(() => {
     let result = flows.value;
@@ -164,6 +177,10 @@ export const useAppStore = defineStore("app", () => {
     snapshotOnlyBuild,
     missingSnapshot,
     snapshotRestrictions,
+    remoteConfig,
+    remoteCheckFailed,
+    isRemoteLocked,
+    featureEnabled,
     filteredFlows,
     skyAppMap,
     supplierMap,

@@ -218,6 +218,18 @@ export interface SnapshotData {
   author: string;
 }
 
+export interface RemoteConfig {
+  enabled: boolean;
+  minVersion: string;
+  latestVersion: string;
+  message: string;
+  updateUrlMac: string;
+  updateUrlWin: string;
+  updateNotes: string;
+  features: Record<string, boolean>;
+  announcement: { text: string; type: 'info' | 'warning' | 'error' } | null;
+}
+
 export type PriorityLevel = 0 | 1 | 2 | 3;
 export const PRIORITY_MAP: Record<PriorityLevel, string> = {
   0: "FATAL",

@@ -1,5 +1,6 @@
 mod commands;
 mod query_engine;
+pub mod remote_config;
 pub mod snapshot;
 mod storage;
 
@@ -72,6 +73,7 @@ pub fn run() {
             commands::import_snapshot,
             commands::get_auto_snapshot,
             commands::get_app_mode,
+            commands::check_remote_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

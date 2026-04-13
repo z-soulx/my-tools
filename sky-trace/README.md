@@ -76,6 +76,13 @@ sky-trace/
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 └── package.json
+└── docs/
+      ├── architecture.md          ← 深度架构参考（启动流程、模块地图、设计模式）
+      ├── remote-control.md        ← 远端控制 + feature flags + 快照模式
+      ├── release.md               ← 版本号、构建、发布清单、文件托管选型
+      ├── feishu-bitable-setup.md  ← 飞书多维表格配置操作教程（原
+  feishu-setup.md）
+      └── product-vision.md        ← 产品规划历史文档（原 PLAN.md）
 ```
 
 ## 核心功能

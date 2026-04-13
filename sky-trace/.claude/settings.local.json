@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(npx vue-tsc:*)",
-      "Bash(cargo check:*)"
+      "Bash(cargo check:*)",
+      "Bash(npm run:*)",
+      "WebFetch(domain:feishu.doubao.com)",
+      "WebSearch",
+      "WebFetch(domain:gitee.com)",
+      "WebFetch(domain:help.gitee.com)"
     ]
   }
 }

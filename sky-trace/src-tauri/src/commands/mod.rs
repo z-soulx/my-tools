@@ -2,6 +2,7 @@ use serde_json::Value;
 use tauri::State;
 
 use crate::query_engine::SkynetClient;
+use crate::remote_config::RemoteConfig;
 use crate::snapshot::{self, SnapshotData, SnapshotRestrictions, SnapshotState};
 use crate::storage::{
     ChecklistGroup, ChecklistGroupInput, Database, RecoveryGroup, RecoveryGroupInput,
@@ -250,4 +251,11 @@ pub fn get_app_mode(state: State<'_, SnapshotState>) -> Result<AppMode, String> 
         snapshot_only: crate::is_snapshot_only(),
         has_snapshot: lock.is_some(),
     })
+}
+
+// ── Remote Config ──
+
+#[tauri::command]
+pub async fn check_remote_config() -> Result<RemoteConfig, String> {
+    crate::remote_config::fetch_config().await
 }

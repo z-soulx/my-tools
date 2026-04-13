@@ -12,6 +12,7 @@ import type {
   RecoveryStep,
   SnapshotData,
   SnapshotRestrictions,
+  RemoteConfig,
 } from "@/types";
 
 export async function getSkyApps(): Promise<SkyApp[]> {
@@ -197,4 +198,8 @@ export async function getAutoSnapshot(): Promise<SnapshotData | null> {
 
 export async function getAppMode(): Promise<{ snapshotOnly: boolean; hasSnapshot: boolean }> {
   return invoke("get_app_mode");
+}
+
+export async function checkRemoteConfig(): Promise<RemoteConfig> {
+  return invoke("check_remote_config");
 }

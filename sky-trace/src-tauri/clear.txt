@@ -1,0 +1,2 @@
+在该目录执行
+cargo clean

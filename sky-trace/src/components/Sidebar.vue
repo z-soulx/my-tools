@@ -19,20 +19,24 @@ function isActive(path: string) {
 }
 
 const allNavItems = [
-  { path: "/flows", label: "排查链路", icon: "🔗", restrictionKey: null },
-  { path: "/quick-query", label: "快速查询", icon: "⚡", restrictionKey: "hideQuickQuery" as const },
-  { path: "/checklists", label: "监控Checklist", icon: "📋", restrictionKey: null },
-  { path: "/recovery", label: "快速恢复", icon: "🔧", restrictionKey: null },
-  { path: "/suppliers", label: "供应商管理", icon: "🏢", restrictionKey: "hideSuppliers" as const },
-  { path: "/settings", label: "天网配置", icon: "⚙", restrictionKey: "hideSettings" as const },
-  { path: "/trash", label: "回收站", icon: "🗑", restrictionKey: "hideTrash" as const },
+  { path: "/flows", label: "排查链路", icon: "🔗", restrictionKey: null, featureKey: null },
+  { path: "/quick-query", label: "快速查询", icon: "⚡", restrictionKey: "hideQuickQuery" as const, featureKey: "skynetQuery" },
+  { path: "/checklists", label: "监控Checklist", icon: "📋", restrictionKey: null, featureKey: null },
+  { path: "/recovery", label: "快速恢复", icon: "🔧", restrictionKey: null, featureKey: null },
+  { path: "/suppliers", label: "供应商管理", icon: "🏢", restrictionKey: "hideSuppliers" as const, featureKey: null },
+  { path: "/settings", label: "天网配置", icon: "⚙", restrictionKey: "hideSettings" as const, featureKey: null },
+  { path: "/trash", label: "回收站", icon: "🗑", restrictionKey: "hideTrash" as const, featureKey: "trashAccess" },
 ];
 
 const navItems = computed(() => {
-  if (!store.snapshotMode) return allNavItems;
   return allNavItems.filter((item) => {
-    if (!item.restrictionKey) return true;
-    return !store.snapshotRestrictions[item.restrictionKey];
+    // Remote feature flag check (all modes)
+    if (item.featureKey && !store.featureEnabled(item.featureKey)) return false;
+    // Snapshot restriction check (snapshot mode only)
+    if (store.snapshotMode && item.restrictionKey) {
+      return !store.snapshotRestrictions[item.restrictionKey];
+    }
+    return true;
   });
 });
 </script>
@@ -120,10 +124,12 @@ const navItems = computed(() => {
       </div>
       <div v-if="!store.snapshotMode" class="flex items-center gap-1">
         <button
+          v-if="store.featureEnabled('snapshotExport')"
           class="flex-1 text-[10px] px-2 py-1 rounded bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors"
           @click="emit('export-snapshot')"
         >导出快照</button>
         <button
+          v-if="store.featureEnabled('snapshotImport')"
           class="flex-1 text-[10px] px-2 py-1 rounded bg-white/10 text-white/70 hover:bg-white/20 hover:text-white transition-colors"
           @click="emit('import-snapshot')"
         >导入快照</button>

@@ -9,7 +9,7 @@ const groups = ref<RecoveryGroup[]>([]);
 const editingGroup = ref<RecoveryGroup | null>(null);
 const showEditor = ref(false);
 
-const canEdit = !store.snapshotMode || !store.snapshotRestrictions.hideRecoveryEdit;
+const canEdit = (!store.snapshotMode || !store.snapshotRestrictions.hideRecoveryEdit) && store.featureEnabled('recoveryEdit');
 
 onMounted(async () => {
   await loadGroups();

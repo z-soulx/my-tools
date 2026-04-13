@@ -9,7 +9,7 @@ const groups = ref<ChecklistGroup[]>([]);
 const editingGroup = ref<ChecklistGroup | null>(null);
 const showEditor = ref(false);
 
-const canEdit = !store.snapshotMode || !store.snapshotRestrictions.hideChecklistEdit;
+const canEdit = (!store.snapshotMode || !store.snapshotRestrictions.hideChecklistEdit) && store.featureEnabled('checklistEdit');
 
 onMounted(async () => {
   await loadGroups();
