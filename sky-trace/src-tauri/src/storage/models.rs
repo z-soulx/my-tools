@@ -83,6 +83,8 @@ pub struct DynamicParam {
     pub options: Option<Vec<String>>,
     #[serde(default)]
     pub allow_custom: Option<bool>,
+    #[serde(default)]
+    pub snippets: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

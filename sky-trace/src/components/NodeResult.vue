@@ -54,13 +54,19 @@ const rawLogList = computed<SkynetLogItem[]>(
 const logList = computed(() =>
   rawLogList.value.filter((log) => selectedPriorities.value.has(log.priority))
 );
+
+const filteredLogList = computed(() => {
+  if (!effectiveSearch.value) return logList.value;
+  const kw = effectiveSearch.value.toLowerCase();
+  return logList.value.filter((log) => log.msg.toLowerCase().includes(kw));
+});
 const totalCount = computed(() => props.result.result?.result?.count ?? 0);
 const rawResponseCode = computed(() => props.result.result?.code ?? "N/A");
 
 const totalMatches = computed(() => {
   if (!effectiveSearch.value) return 0;
   const kw = effectiveSearch.value.toLowerCase();
-  return logList.value.slice(0, maxDisplay.value).reduce(
+  return filteredLogList.value.slice(0, maxDisplay.value).reduce(
     (sum, log) => sum + countOccurrences(log.msg.toLowerCase(), kw), 0
   );
 });
@@ -82,7 +88,7 @@ function matchesBefore(logIndex: number): number {
   const kw = effectiveSearch.value.toLowerCase();
   let count = 0;
   for (let i = 0; i < logIndex && i < maxDisplay.value; i++) {
-    count += countOccurrences(logList.value[i].msg.toLowerCase(), kw);
+    count += countOccurrences(filteredLogList.value[i].msg.toLowerCase(), kw);
   }
   return count;
 }
@@ -201,7 +207,10 @@ function priorityClass(priority: number): string {
       <!-- 顶部栏 -->
       <div class="px-4 py-2 flex items-center justify-between cursor-pointer hover:bg-surface-alt" @click="expanded = !expanded">
         <span class="text-sm text-text-secondary">
-          共 {{ totalCount }} 条日志，显示前 {{ Math.min(maxDisplay, logList.length) }} 条
+          共 {{ totalCount }} 条日志，显示前 {{ Math.min(maxDisplay, filteredLogList.length) }} 条
+          <span v-if="effectiveSearch && filteredLogList.length !== logList.length" class="text-amber-600">
+            (搜索过滤后 {{ filteredLogList.length }} 条)
+          </span>
         </span>
         <div class="flex items-center gap-2">
           <button
@@ -239,7 +248,9 @@ function priorityClass(priority: number): string {
             : 'border-border text-text-secondary/40'"
           @click.stop="togglePriority(Number(p))"
         >{{ label }}</button>
-        <span class="text-[10px] text-text-secondary ml-auto">{{ logList.length }}/{{ rawLogList.length }}</span>
+        <span class="text-[10px] text-text-secondary ml-auto">{{ logList.length }}/{{ rawLogList.length }}
+          <template v-if="effectiveSearch && filteredLogList.length !== logList.length"> → {{ filteredLogList.length }}</template>
+        </span>
       </div>
 
       <!-- AI 分析面板 -->
@@ -308,10 +319,11 @@ function priorityClass(priority: number): string {
       <!-- 日志列表 -->
       <div v-if="expanded" ref="scrollContainer" class="max-h-80 overflow-y-auto">
         <div
-          v-for="(log, logIdx) in logList.slice(0, maxDisplay)"
+          v-for="(log, logIdx) in filteredLogList.slice(0, maxDisplay)"
           :key="log.id"
-          class="px-4 py-2 text-xs font-mono border-b border-border/50 hover:bg-surface-alt cursor-pointer select-none group"
-          @click="toggleRow(log)"
+          class="px-4 py-2 text-xs font-mono border-b border-border/50 hover:bg-surface-alt group"
+          :class="expandedRows.has(log.id) ? 'select-text cursor-text' : 'select-none cursor-pointer'"
+          @click="!expandedRows.has(log.id) && toggleRow(log)"
           @dblclick="openDetail(log)"
         >
           <div class="flex items-start gap-2">
@@ -335,6 +347,12 @@ function priorityClass(priority: number): string {
               @click.stop="copyText(log.msg, log.id)"
               title="复制全文"
             >{{ copied === log.id ? '✓' : '复制' }}</button>
+            <button
+              v-if="expandedRows.has(log.id)"
+              class="shrink-0 text-[10px] text-text-secondary/40 hover:text-text opacity-0 group-hover:opacity-100 transition-opacity px-1"
+              @click.stop="toggleRow(log)"
+              title="收起"
+            >收起</button>
           </div>
           <div class="mt-1 flex items-center gap-3 text-[10px] text-text-secondary">
             <span v-if="log.ip">IP: {{ log.ip }}</span>
@@ -345,9 +363,9 @@ function priorityClass(priority: number): string {
           </div>
         </div>
 
-        <div v-if="logList.length > maxDisplay" class="px-4 py-2 text-center">
+        <div v-if="filteredLogList.length > maxDisplay" class="px-4 py-2 text-center">
           <button class="text-xs text-primary hover:underline" @click="maxDisplay += 50">
-            加载更多 (还有 {{ logList.length - maxDisplay }} 条)
+            加载更多 (还有 {{ filteredLogList.length - maxDisplay }} 条)
           </button>
         </div>
       </div>

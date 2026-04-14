@@ -29,6 +29,7 @@ export interface DynamicParam {
   hint?: string;
   options?: string[];
   allowCustom?: boolean;
+  snippets?: string[];
 }
 
 /**

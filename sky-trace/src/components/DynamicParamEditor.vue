@@ -8,6 +8,7 @@ const emit = defineEmits<{ close: []; save: [params: DynamicParam[]] }>();
 interface ParamItem extends DynamicParam {
   _uid: number;
   _optionsText: string;
+  _snippetsText: string;
 }
 
 let nextUid = 1;
@@ -17,9 +18,11 @@ const list = ref<ParamItem[]>(
     ...p,
     hint: p.hint ?? "",
     options: p.options ? [...p.options] : [],
+    snippets: p.snippets ? [...p.snippets] : [],
     allowCustom: p.allowCustom ?? true,
     _uid: nextUid++,
     _optionsText: (p.options ?? []).join("\n"),
+    _snippetsText: (p.snippets ?? []).join("\n"),
   }))
 );
 
@@ -45,9 +48,11 @@ function addParam() {
     defaultValue: "",
     hint: "",
     options: [],
+    snippets: [],
     allowCustom: true,
     _uid: nextUid++,
     _optionsText: "",
+    _snippetsText: "",
   };
   list.value.push(item);
   search.value = "";
@@ -105,11 +110,15 @@ function handleSave() {
       options: p._optionsText
         ? p._optionsText.split("\n").map((s) => s.trim()).filter(Boolean)
         : [],
+      snippets: p._snippetsText
+        ? p._snippetsText.split("\n").map((s) => s.trim()).filter(Boolean)
+        : [],
     }))
     .filter((p) => p.key.trim() && p.label.trim())
     .map((p) => ({
       ...p,
       options: p.options.length > 0 ? p.options : undefined,
+      snippets: p.snippets.length > 0 ? p.snippets : undefined,
       hint: p.hint || undefined,
     }));
   emit("save", valid as DynamicParam[]);
@@ -180,6 +189,7 @@ function handleSave() {
             <span v-if="item.required" class="text-[10px] px-1.5 py-0.5 bg-red-50 text-error rounded shrink-0">必填</span>
             <span v-if="item.defaultValue" class="text-[10px] px-1.5 py-0.5 bg-surface-alt text-text-secondary rounded truncate max-w-[80px] shrink-0" :title="item.defaultValue">= {{ item.defaultValue }}</span>
             <span v-if="item._optionsText?.trim()" class="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-600 rounded shrink-0">{{ item._optionsText.split('\n').filter(s => s.trim()).length }} 选项</span>
+            <span v-if="item._snippetsText?.trim()" class="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded shrink-0">{{ item._snippetsText.split('\n').filter(s => s.trim()).length }} 快捷</span>
             <span class="text-text-secondary/40 text-xs shrink-0">{{ expandedUid === item._uid ? '▾' : '▸' }}</span>
           </div>
 
@@ -254,6 +264,15 @@ function handleSave() {
                 <input type="checkbox" v-model="item.allowCustom" class="rounded" />
                 允许自定义输入
               </label>
+            </div>
+            <div>
+              <label class="block text-[10px] text-text-secondary mb-0.5">快捷填入 <span class="text-text-secondary/50">(每行一个，格式: 值|显示名 或 纯文本。执行时显示为可点击芯片)</span></label>
+              <textarea
+                v-model="item._snippetsText"
+                rows="2"
+                placeholder='\"innId\":\"WYN5300072\",\"roomTypeCode\":\"VDS\"|温德姆示例&#10;较长的JSON片段|含天数维度'
+                class="w-full px-2 py-1.5 text-sm border border-border rounded outline-none focus:border-primary resize-none font-mono"
+              />
             </div>
             <div class="flex justify-end pt-1">
               <button class="text-xs text-error hover:text-red-700 px-2 py-1 rounded hover:bg-red-50 transition-colors" @click.stop="removeParam(item._uid)">删除此参数</button>

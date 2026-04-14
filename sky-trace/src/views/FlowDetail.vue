@@ -11,6 +11,7 @@ import { resolveBinding, resolveRelativeTime, extractTemplateParams } from "@/ty
 import NodeEditor from "@/components/NodeEditor.vue";
 import NodeResult from "@/components/NodeResult.vue";
 import DynamicParamEditor from "@/components/DynamicParamEditor.vue";
+import ParamHintPopover from "@/components/ParamHintPopover.vue";
 import FlowFormDialog from "@/components/FlowFormDialog.vue";
 import TimeRangeSelector from "@/components/TimeRangeSelector.vue";
 
@@ -50,7 +51,6 @@ const expandedNodeContent = ref<Record<string, boolean>>({});
 const customInputKeys = ref<Record<string, boolean>>({});
 const showFlowInfoEditor = ref(false);
 const paramErrors = ref<Record<string, boolean>>({});
-const expandedHints = ref<Record<string, boolean>>({});
 
 const flowId = computed(() => Number(route.params.id));
 
@@ -534,6 +534,22 @@ function onOptionSelect(paramKey: string, value: string) {
     dynamicValues.value[paramKey] = value;
   }
 }
+
+async function applySnippet(paramKey: string, value: string) {
+  dynamicValues.value[paramKey] = value;
+  paramErrors.value[paramKey] = false;
+  // 如果当前是 select 模式且值不在 options 中，自动切到自定义输入
+  const param = flow.value?.dynamicParams.find((p) => p.key === paramKey);
+  if (param?.options?.length && !matchesOption(param.options, value)) {
+    customInputKeys.value[paramKey] = true;
+  }
+  // 同时复制到剪贴板
+  try {
+    await navigator.clipboard.writeText(value);
+  } catch {
+    /* clipboard not available */
+  }
+}
 </script>
 
 <template>
@@ -584,62 +600,74 @@ function onOptionSelect(paramKey: string, value: string) {
             <label class="block text-xs text-text-secondary mb-1 truncate" :title="param.label">
               {{ param.label }} <span v-if="param.required" class="text-error">*</span>
             </label>
-            <!-- 有 options 且不允许自定义：纯 select -->
-            <select
-              v-if="param.options?.length && param.allowCustom === false"
-              v-model="dynamicValues[param.key]"
-              class="w-full px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
-              :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
-              @change="paramErrors[param.key] = false"
-            >
-              <option value="" disabled>请选择</option>
-              <option v-for="opt in param.options" :key="opt" :value="parseOption(opt).value">{{ parseOption(opt).label }}</option>
-            </select>
-            <!-- 有 options 且允许自定义：select + 自定义切换 -->
-            <template v-else-if="param.options?.length">
+            <!-- 输入行：input + hint popover -->
+            <div class="flex items-center gap-1">
+              <!-- 有 options 且不允许自定义：纯 select -->
               <select
-                v-if="!customInputKeys[param.key]"
-                :value="matchesOption(param.options, dynamicValues[param.key]) ? dynamicValues[param.key] : ''"
-                class="w-full px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                v-if="param.options?.length && param.allowCustom === false"
+                v-model="dynamicValues[param.key]"
+                class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
                 :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
-                @change="onOptionSelect(param.key, ($event.target as HTMLSelectElement).value); paramErrors[param.key] = false"
+                @change="paramErrors[param.key] = false"
               >
                 <option value="" disabled>请选择</option>
                 <option v-for="opt in param.options" :key="opt" :value="parseOption(opt).value">{{ parseOption(opt).label }}</option>
-                <option value="__custom__">自定义...</option>
               </select>
-              <div v-else class="flex gap-1">
-                <input
-                  v-model="dynamicValues[param.key]"
-                  :placeholder="param.defaultValue || '自定义输入'"
+              <!-- 有 options 且允许自定义：select + 自定义切换 -->
+              <template v-else-if="param.options?.length">
+                <select
+                  v-if="!customInputKeys[param.key]"
+                  :value="matchesOption(param.options, dynamicValues[param.key]) ? dynamicValues[param.key] : ''"
                   class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
                   :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
-                  @input="paramErrors[param.key] = false"
-                />
-                <button
-                  class="shrink-0 px-2 text-xs text-text-secondary hover:text-primary border border-border rounded-lg"
-                  @click="customInputKeys[param.key] = false"
-                >选项</button>
-              </div>
-            </template>
-            <!-- 无 options：普通 input -->
-            <input
-              v-else
-              v-model="dynamicValues[param.key]"
-              :placeholder="param.defaultValue || param.label"
-              class="w-full px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
-              :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
-              @input="paramErrors[param.key] = false"
-            />
+                  @change="onOptionSelect(param.key, ($event.target as HTMLSelectElement).value); paramErrors[param.key] = false"
+                >
+                  <option value="" disabled>请选择</option>
+                  <option v-for="opt in param.options" :key="opt" :value="parseOption(opt).value">{{ parseOption(opt).label }}</option>
+                  <option value="__custom__">自定义...</option>
+                </select>
+                <div v-else class="flex-1 min-w-0 flex gap-1">
+                  <input
+                    v-model="dynamicValues[param.key]"
+                    :placeholder="param.defaultValue || '自定义输入'"
+                    class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                    :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+                    @input="paramErrors[param.key] = false"
+                    @focus="($event.target as HTMLInputElement).select()"
+                  />
+                  <button
+                    class="shrink-0 px-2 text-xs text-text-secondary hover:text-primary border border-border rounded-lg"
+                    @click="customInputKeys[param.key] = false"
+                  >选项</button>
+                </div>
+              </template>
+              <!-- 无 options：普通 input -->
+              <input
+                v-else
+                v-model="dynamicValues[param.key]"
+                :placeholder="param.defaultValue || param.label"
+                class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+                @input="paramErrors[param.key] = false"
+                @focus="($event.target as HTMLInputElement).select()"
+              />
+              <!-- Hint Popover -->
+              <ParamHintPopover
+                v-if="param.hint"
+                :hint="param.hint"
+                @apply="applySnippet(param.key, $event)"
+              />
+            </div>
             <p v-if="paramErrors[param.key]" class="mt-0.5 text-[10px] text-error">此参数为必填项</p>
-            <template v-else-if="param.hint">
-              <div
-                class="mt-0.5 text-[10px] text-text-secondary/70 break-all cursor-pointer select-none"
-                :class="expandedHints[param.key] ? 'whitespace-pre-wrap' : 'line-clamp-2'"
-                :title="expandedHints[param.key] ? '点击收起' : '点击展开完整提示'"
-                @click="expandedHints[param.key] = !expandedHints[param.key]"
-              >{{ param.hint }}</div>
-            </template>
+            <!-- Snippets 快捷填入芯片 -->
+            <div v-if="param.snippets?.length" class="mt-1 flex flex-wrap gap-1">
+              <button
+                v-for="(snippet, i) in param.snippets" :key="i"
+                class="text-[10px] px-2 py-0.5 rounded-full border border-emerald-200 text-emerald-700 bg-emerald-50 hover:bg-emerald-100 truncate max-w-[200px] transition-colors"
+                :title="parseOption(snippet).value"
+                @click="applySnippet(param.key, parseOption(snippet).value)"
+              >{{ parseOption(snippet).label }}</button>
+            </div>
             <div v-if="paramUsageMap.get(param.key)?.length" class="mt-1 flex flex-wrap gap-1">
               <span
                 v-for="u in paramUsageMap.get(param.key)"
