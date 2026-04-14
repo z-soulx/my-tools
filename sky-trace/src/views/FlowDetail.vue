@@ -49,6 +49,8 @@ const expandedNotes = ref<Record<string, boolean>>({});
 const expandedNodeContent = ref<Record<string, boolean>>({});
 const customInputKeys = ref<Record<string, boolean>>({});
 const showFlowInfoEditor = ref(false);
+const paramErrors = ref<Record<string, boolean>>({});
+const expandedHints = ref<Record<string, boolean>>({});
 
 const flowId = computed(() => Number(route.params.id));
 
@@ -377,6 +379,20 @@ function resolveField(binding: FieldBinding): string {
 
 async function executeNodes(onlySelected = false) {
   if (!flow.value) return;
+
+  // 校验必填参数
+  const errors: Record<string, boolean> = {};
+  for (const param of flow.value.dynamicParams) {
+    if (param.required && !dynamicValues.value[param.key]?.trim()) {
+      errors[param.key] = true;
+    }
+  }
+  paramErrors.value = errors;
+  if (Object.keys(errors).length > 0) {
+    showFeedback("请填写所有必填参数（标 * 项）");
+    return;
+  }
+
   executing.value = true;
   execResults.value = {};
 
@@ -563,16 +579,18 @@ function onOptionSelect(paramKey: string, value: string) {
     <div v-if="activeTab === 'execute'" class="flex-1 overflow-y-auto p-6">
       <!-- 动态参数 + 时间 -->
       <div class="bg-surface rounded-xl border border-border p-4 mb-6 space-y-4">
-        <div v-if="flow.dynamicParams.length > 0" class="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <div v-for="param in flow.dynamicParams" :key="param.key">
-            <label class="block text-xs text-text-secondary mb-1">
+        <div v-if="flow.dynamicParams.length > 0" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div v-for="param in flow.dynamicParams" :key="param.key" class="min-w-0">
+            <label class="block text-xs text-text-secondary mb-1 truncate" :title="param.label">
               {{ param.label }} <span v-if="param.required" class="text-error">*</span>
             </label>
             <!-- 有 options 且不允许自定义：纯 select -->
             <select
               v-if="param.options?.length && param.allowCustom === false"
               v-model="dynamicValues[param.key]"
-              class="w-full px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+              class="w-full px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+              :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+              @change="paramErrors[param.key] = false"
             >
               <option value="" disabled>请选择</option>
               <option v-for="opt in param.options" :key="opt" :value="parseOption(opt).value">{{ parseOption(opt).label }}</option>
@@ -582,8 +600,9 @@ function onOptionSelect(paramKey: string, value: string) {
               <select
                 v-if="!customInputKeys[param.key]"
                 :value="matchesOption(param.options, dynamicValues[param.key]) ? dynamicValues[param.key] : ''"
-                class="w-full px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
-                @change="onOptionSelect(param.key, ($event.target as HTMLSelectElement).value)"
+                class="w-full px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+                @change="onOptionSelect(param.key, ($event.target as HTMLSelectElement).value); paramErrors[param.key] = false"
               >
                 <option value="" disabled>请选择</option>
                 <option v-for="opt in param.options" :key="opt" :value="parseOption(opt).value">{{ parseOption(opt).label }}</option>
@@ -593,7 +612,9 @@ function onOptionSelect(paramKey: string, value: string) {
                 <input
                   v-model="dynamicValues[param.key]"
                   :placeholder="param.defaultValue || '自定义输入'"
-                  class="flex-1 px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+                  class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                  :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+                  @input="paramErrors[param.key] = false"
                 />
                 <button
                   class="shrink-0 px-2 text-xs text-text-secondary hover:text-primary border border-border rounded-lg"
@@ -606,14 +627,24 @@ function onOptionSelect(paramKey: string, value: string) {
               v-else
               v-model="dynamicValues[param.key]"
               :placeholder="param.defaultValue || param.label"
-              class="w-full px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+              class="w-full px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+              :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+              @input="paramErrors[param.key] = false"
             />
-            <p v-if="param.hint" class="mt-0.5 text-[10px] text-text-secondary/70 whitespace-pre-wrap">{{ param.hint }}</p>
+            <p v-if="paramErrors[param.key]" class="mt-0.5 text-[10px] text-error">此参数为必填项</p>
+            <template v-else-if="param.hint">
+              <div
+                class="mt-0.5 text-[10px] text-text-secondary/70 break-all cursor-pointer select-none"
+                :class="expandedHints[param.key] ? 'whitespace-pre-wrap' : 'line-clamp-2'"
+                :title="expandedHints[param.key] ? '点击收起' : '点击展开完整提示'"
+                @click="expandedHints[param.key] = !expandedHints[param.key]"
+              >{{ param.hint }}</div>
+            </template>
             <div v-if="paramUsageMap.get(param.key)?.length" class="mt-1 flex flex-wrap gap-1">
               <span
                 v-for="u in paramUsageMap.get(param.key)"
                 :key="u.nodeId + u.field"
-                class="inline-flex items-center text-[10px] px-1.5 py-0.5 bg-blue-50 text-primary/80 rounded"
+                class="inline-flex items-center text-[10px] px-1.5 py-0.5 bg-blue-50 text-primary/80 rounded truncate max-w-full"
                 :title="`${u.label} 的 ${u.field} 字段`"
               >{{ u.label }} · {{ u.field }}</span>
             </div>
