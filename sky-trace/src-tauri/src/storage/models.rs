@@ -54,6 +54,8 @@ pub struct TraceFlow {
     pub sort_order: i64,
     pub dynamic_params: Vec<DynamicParam>,
     pub nodes: Vec<TraceNode>,
+    #[serde(default)]
+    pub node_groups: Vec<serde_json::Value>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -68,6 +70,8 @@ pub struct TraceFlowInput {
     pub tags: Vec<String>,
     pub dynamic_params: Vec<DynamicParam>,
     pub nodes: Vec<TraceNode>,
+    #[serde(default)]
+    pub node_groups: Vec<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +89,10 @@ pub struct DynamicParam {
     pub allow_custom: Option<bool>,
     #[serde(default)]
     pub snippets: Option<Vec<String>>,
+    #[serde(default)]
+    pub hidden: Option<bool>,
+    #[serde(default)]
+    pub param_type: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

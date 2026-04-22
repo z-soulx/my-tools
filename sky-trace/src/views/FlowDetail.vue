@@ -4,12 +4,13 @@ import { useRoute, useRouter } from "vue-router";
 import { useAppStore } from "@/stores/app";
 import * as api from "@/services/tauri";
 import type {
-  TraceFlow, TraceNode, NodeExecResult, DynamicParam,
-  SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, FieldBinding,
+  TraceFlow, TraceNode, NodeExecResult, DynamicParam, NodeGroup,
+  SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, JcpOrderConfig, FieldBinding,
 } from "@/types";
 import { resolveBinding, resolveRelativeTime, extractTemplateParams } from "@/types";
 import NodeEditor from "@/components/NodeEditor.vue";
 import NodeResult from "@/components/NodeResult.vue";
+import JcpOrderResult from "@/components/JcpOrderResult.vue";
 import DynamicParamEditor from "@/components/DynamicParamEditor.vue";
 import ParamHintPopover from "@/components/ParamHintPopover.vue";
 import FlowFormDialog from "@/components/FlowFormDialog.vue";
@@ -51,6 +52,9 @@ const expandedNodeContent = ref<Record<string, boolean>>({});
 const customInputKeys = ref<Record<string, boolean>>({});
 const showFlowInfoEditor = ref(false);
 const paramErrors = ref<Record<string, boolean>>({});
+const groupSectionExpanded = ref(false);
+const groupNameInput = ref("");
+const jcpQueryFieldOverrides = ref<Record<string, "orderId" | "traceId">>({});
 
 const flowId = computed(() => Number(route.params.id));
 
@@ -68,18 +72,32 @@ const paramUsageMap = computed(() => {
   const map = new Map<string, ParamUsage[]>();
   if (!flow.value) return map;
   for (const node of flow.value.nodes) {
-    if (node.type !== "skynet_query") continue;
-    const cfg = node.config as SkynetQueryConfig;
-    for (const [fieldLabel, fieldKey] of FIELD_LABELS) {
-      const b = cfg[fieldKey] as FieldBinding | undefined;
-      if (!b) continue;
-      if (b.mode === "dynamic" && b.paramKey) {
-        if (!map.has(b.paramKey)) map.set(b.paramKey, []);
-        map.get(b.paramKey)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
-      } else if (b.mode === "template" && b.templateValue) {
-        for (const key of extractTemplateParams(b.templateValue)) {
-          if (!map.has(key)) map.set(key, []);
-          map.get(key)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
+    if (node.type === "skynet_query") {
+      const cfg = node.config as SkynetQueryConfig;
+      for (const [fieldLabel, fieldKey] of FIELD_LABELS) {
+        const b = cfg[fieldKey] as FieldBinding | undefined;
+        if (!b) continue;
+        if (b.mode === "dynamic" && b.paramKey) {
+          if (!map.has(b.paramKey)) map.set(b.paramKey, []);
+          map.get(b.paramKey)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
+        } else if (b.mode === "template" && b.templateValue) {
+          for (const key of extractTemplateParams(b.templateValue)) {
+            if (!map.has(key)) map.set(key, []);
+            map.get(key)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
+          }
+        }
+      }
+    } else if (node.type === "jcp_order") {
+      const cfg = node.config as JcpOrderConfig;
+      for (const [b, fieldLabel] of [[cfg.queryValue, "查询值"]] as [FieldBinding, string][]) {
+        if (b.mode === "dynamic" && b.paramKey) {
+          if (!map.has(b.paramKey)) map.set(b.paramKey, []);
+          map.get(b.paramKey)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
+        } else if (b.mode === "template" && b.templateValue) {
+          for (const key of extractTemplateParams(b.templateValue)) {
+            if (!map.has(key)) map.set(key, []);
+            map.get(key)!.push({ nodeId: node.id, label: node.label, field: fieldLabel });
+          }
         }
       }
     }
@@ -93,17 +111,28 @@ const nodeParamMap = computed(() => {
   if (!flow.value) return map;
   const paramLabelMap = new Map(flow.value.dynamicParams.map((p) => [p.key, p.label]));
   for (const node of flow.value.nodes) {
-    if (node.type !== "skynet_query") continue;
-    const cfg = node.config as SkynetQueryConfig;
     const entries: { key: string; label: string; field: string }[] = [];
-    for (const [fieldLabel, fieldKey] of FIELD_LABELS) {
-      const b = cfg[fieldKey] as FieldBinding | undefined;
-      if (!b) continue;
-      if (b.mode === "dynamic" && b.paramKey) {
-        entries.push({ key: b.paramKey, label: paramLabelMap.get(b.paramKey) || b.paramKey, field: fieldLabel });
-      } else if (b.mode === "template" && b.templateValue) {
+    if (node.type === "skynet_query") {
+      const cfg = node.config as SkynetQueryConfig;
+      for (const [fieldLabel, fieldKey] of FIELD_LABELS) {
+        const b = cfg[fieldKey] as FieldBinding | undefined;
+        if (!b) continue;
+        if (b.mode === "dynamic" && b.paramKey) {
+          entries.push({ key: b.paramKey, label: paramLabelMap.get(b.paramKey) || b.paramKey, field: fieldLabel });
+        } else if (b.mode === "template" && b.templateValue) {
+          for (const key of extractTemplateParams(b.templateValue)) {
+            entries.push({ key, label: paramLabelMap.get(key) || key, field: fieldLabel });
+          }
+        }
+      }
+    } else if (node.type === "jcp_order") {
+      const cfg = node.config as JcpOrderConfig;
+      const b = cfg.queryValue;
+      if (b?.mode === "dynamic" && b.paramKey) {
+        entries.push({ key: b.paramKey, label: paramLabelMap.get(b.paramKey) || b.paramKey, field: "查询值" });
+      } else if (b?.mode === "template" && b.templateValue) {
         for (const key of extractTemplateParams(b.templateValue)) {
-          entries.push({ key, label: paramLabelMap.get(key) || key, field: fieldLabel });
+          entries.push({ key, label: paramLabelMap.get(key) || key, field: "查询值" });
         }
       }
     }
@@ -114,14 +143,24 @@ const nodeParamMap = computed(() => {
 
 const selectAllNodes = computed({
   get: () => {
-    const qNodes = flow.value?.nodes.filter((n) => n.type === "skynet_query") ?? [];
+    const qNodes = flow.value?.nodes.filter((n) => n.type === "skynet_query" || n.type === "jcp_order") ?? [];
     return qNodes.length > 0 && qNodes.every((n) => selectedNodeIds.value.has(n.id));
   },
   set: (val: boolean) => {
-    const qNodes = flow.value?.nodes.filter((n) => n.type === "skynet_query") ?? [];
+    const qNodes = flow.value?.nodes.filter((n) => n.type === "skynet_query" || n.type === "jcp_order") ?? [];
     if (val) qNodes.forEach((n) => selectedNodeIds.value.add(n.id));
     else selectedNodeIds.value.clear();
   },
+});
+
+const activeParamKeys = computed<Set<string> | null>(() => {
+  if (!flow.value) return null;
+  const keys = new Set<string>();
+  for (const node of flow.value.nodes.filter(n => selectedNodeIds.value.has(n.id))) {
+    const params = nodeParamMap.value.get(node.id);
+    if (params) params.forEach(p => keys.add(p.key));
+  }
+  return keys.size > 0 ? keys : null;
 });
 
 function toggleNodeSelection(nodeId: string) {
@@ -147,8 +186,11 @@ onMounted(async () => {
       }
     });
     flow.value!.nodes
-      .filter((n) => n.type === "skynet_query")
+      .filter((n) => n.type === "skynet_query" || n.type === "jcp_order")
       .forEach((n) => selectedNodeIds.value.add(n.id));
+    flow.value!.nodes
+      .filter((n) => n.type === "jcp_order" && (n.config as JcpOrderConfig).queryField === "runtime")
+      .forEach((n) => { jcpQueryFieldOverrides.value[n.id] = "traceId"; });
   } catch {
     router.push("/flows");
   }
@@ -174,6 +216,7 @@ async function persistFlow() {
     tags: flow.value.tags,
     dynamicParams: flow.value.dynamicParams,
     nodes: flow.value.nodes,
+    nodeGroups: flow.value.nodeGroups,
   });
 }
 
@@ -373,17 +416,86 @@ function showFeedback(msg: string) {
   setTimeout(() => { if (copyFeedback.value === msg) copyFeedback.value = ""; }, 2000);
 }
 
+const paramTypeMap = computed(() => {
+  const map = new Map<string, DynamicParam["paramType"]>();
+  if (!flow.value) return map;
+  for (const p of flow.value.dynamicParams) {
+    if (p.paramType && p.paramType !== "text") map.set(p.key, p.paramType);
+  }
+  return map;
+});
+
 function resolveField(binding: FieldBinding): string {
-  return resolveBinding(binding, dynamicValues.value);
+  return resolveBinding(binding, dynamicValues.value, paramTypeMap.value);
+}
+
+// 将任意时间值（原始值/时间戳）转为 datetime-local 输入框格式 "yyyy-MM-ddTHH:mm"
+function toDatetimeLocal(raw: string): string {
+  if (!raw) return "";
+  let d: Date;
+  if (/^\d+$/.test(raw)) {
+    const n = Number(raw);
+    d = new Date(n < 1e12 ? n * 1000 : n);
+  } else {
+    d = new Date(raw.replace(/[/]/g, "-"));
+  }
+  if (isNaN(d.getTime())) return "";
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+// 将任意时间值转为 date 输入框格式 "yyyy-MM-dd"
+function toDateInput(raw: string): string {
+  return toDatetimeLocal(raw).slice(0, 10);
+}
+
+// datetime-local 变更：将 "yyyy-MM-ddTHH:mm" 按 paramType 存储
+function onDatetimeChange(param: DynamicParam, dtLocal: string) {
+  paramErrors.value[param.key] = false;
+  if (!dtLocal) { dynamicValues.value[param.key] = ""; return; }
+  const d = new Date(dtLocal);
+  if (isNaN(d.getTime())) return;
+  const p = (n: number) => String(n).padStart(2, "0");
+  // 存原始 datetime 字符串，resolveBinding 在使用时按 paramType 转换
+  dynamicValues.value[param.key] = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:00`;
+}
+
+// date 变更：存 yyyy-MM-dd
+function onDateChange(param: DynamicParam, dateStr: string) {
+  paramErrors.value[param.key] = false;
+  dynamicValues.value[param.key] = dateStr;
 }
 
 async function executeNodes(onlySelected = false) {
   if (!flow.value) return;
 
-  // 校验必填参数
+  const targetNodeIds = onlySelected
+    ? new Set(selectedNodeIds.value)
+    : new Set(flow.value.nodes.map((n) => n.id));
+
+  // 收集目标节点实际引用的 dynamic param keys
+  const usedParamKeys = new Set<string>();
+  for (const node of flow.value.nodes.filter((n) => targetNodeIds.has(n.id))) {
+    const cfg = node.config as any;
+    const bindings: FieldBinding[] = [];
+    if (node.type === "skynet_query") {
+      bindings.push(cfg.filter1, cfg.filter2, cfg.indexContext, cfg.contextId);
+    } else if (node.type === "jcp_order") {
+      bindings.push(cfg.queryValue);
+    }
+    for (const b of bindings) {
+      if (!b) continue;
+      if (b.mode === "dynamic" && b.paramKey) usedParamKeys.add(b.paramKey);
+      if (b.mode === "template" && b.templateValue) {
+        extractTemplateParams(b.templateValue).forEach((k) => usedParamKeys.add(k));
+      }
+    }
+  }
+
+  // 校验必填参数，仅限目标节点实际用到的
   const errors: Record<string, boolean> = {};
   for (const param of flow.value.dynamicParams) {
-    if (param.required && !dynamicValues.value[param.key]?.trim()) {
+    if (param.required && usedParamKeys.has(param.key) && !dynamicValues.value[param.key]?.trim()) {
       errors[param.key] = true;
     }
   }
@@ -394,11 +506,7 @@ async function executeNodes(onlySelected = false) {
   }
 
   executing.value = true;
-  execResults.value = {};
-
-  const targetNodeIds = onlySelected
-    ? new Set(selectedNodeIds.value)
-    : new Set(flow.value.nodes.map((n) => n.id));
+  // 只清除本次要执行的节点结果，保留其它节点已有结果
 
   flow.value.nodes.filter((n) => targetNodeIds.has(n.id)).forEach((node) => {
     execResults.value[node.id] = {
@@ -413,6 +521,161 @@ async function executeNodes(onlySelected = false) {
   });
 
   const queryNodes = flow.value.nodes.filter((n) => n.type === "skynet_query" && targetNodeIds.has(n.id));
+  const jcpNodes = flow.value.nodes.filter((n) => n.type === "jcp_order" && targetNodeIds.has(n.id));
+
+  // Phase A: execute jcp_order nodes sequentially first (they extract params for skynet queries)
+  for (const node of jcpNodes) {
+    const start = Date.now();
+    const cfg = node.config as JcpOrderConfig;
+    const queryValue = resolveField(cfg.queryValue);
+    const field = cfg.queryField === "runtime"
+      ? jcpQueryFieldOverrides.value[node.id] ?? "traceId"
+      : cfg.queryField;
+    const body: Record<string, string> = { [field]: queryValue };
+    try {
+      const resp = await api.queryJcpOrder(body);
+      const extracted: Record<string, string> = {};
+      const findDeep = (obj: any, key: string): any => {
+        if (!obj || typeof obj !== "object") return undefined;
+        if (!Array.isArray(obj) && key in obj) return obj[key];
+        const items = Array.isArray(obj) ? obj : Object.values(obj);
+        for (const v of items) {
+          if (v && typeof v === "object") {
+            const found = findDeep(v, key);
+            if (found !== undefined) return found;
+          }
+        }
+        return undefined;
+      };
+
+      const TIME_FIELDS = new Set(["checkInDate", "checkOutDate", "requestTime"]);
+
+      const tryParseDate = (raw: string): Date | null => {
+        if (!raw) return null;
+        if (/^\d+$/.test(raw)) {
+          const n = Number(raw);
+          const d = new Date(n < 1e12 ? n * 1000 : n);
+          return isNaN(d.getTime()) ? null : d;
+        }
+        const d = new Date(raw.replace(/[/]/g, "-"));
+        return isNaN(d.getTime()) ? null : d;
+      };
+
+      const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+
+      const deriveTimeFormats = (paramKey: string, raw: string) => {
+        const d = tryParseDate(raw);
+        if (!d) return;
+        const ymd = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+        const full = `${ymd} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        const tsMs = String(d.getTime());
+        const tsSec = String(Math.floor(d.getTime() / 1000));
+        const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+        const dayTs = String(Math.floor(dayStart.getTime() / 1000));
+
+        const derivations: Record<string, string> = {
+          [`${paramKey}_ymd`]: ymd,
+          [`${paramKey}_full`]: full,
+          [`${paramKey}_ts`]: tsMs,
+          [`${paramKey}_tsSec`]: tsSec,
+          [`${paramKey}_dayTs`]: dayTs,
+        };
+        for (const [dk, dv] of Object.entries(derivations)) {
+          extracted[dk] = dv;
+          dynamicValues.value[dk] = dv;
+        }
+      };
+
+      for (const m of (cfg.extractMappings ?? [])) {
+        if (!m.targetParamKey) continue;
+        const val = findDeep(resp, m.sourceField);
+        if (val !== undefined && val !== null && val !== "") {
+          const strVal = String(val);
+          extracted[m.targetParamKey] = strVal;
+          dynamicValues.value[m.targetParamKey] = strVal;
+          if (TIME_FIELDS.has(m.sourceField)) {
+            deriveTimeFormats(m.targetParamKey, strVal);
+          }
+        }
+      }
+
+      // 供应商映射查询：用已提取的 shotelId/roomTypeId/ratePlanId 调第二个 API
+      if (cfg.supplierMappingEnabled) {
+        const shotelIdKey = (cfg.extractMappings ?? []).find(m => m.sourceField === "shotelId")?.targetParamKey;
+        const roomTypeIdKey = (cfg.extractMappings ?? []).find(m => m.sourceField === "roomTypeId")?.targetParamKey;
+        const ratePlanIdKey = (cfg.extractMappings ?? []).find(m => m.sourceField === "ratePlanId")?.targetParamKey;
+        const elongHotelId = shotelIdKey ? (dynamicValues.value[shotelIdKey] || "") : String(findDeep(resp, "shotelId") ?? "");
+        const elongRoomId = roomTypeIdKey ? (dynamicValues.value[roomTypeIdKey] || "") : String(findDeep(resp, "roomTypeId") ?? "");
+        const elongRateplanId = ratePlanIdKey ? (dynamicValues.value[ratePlanIdKey] || "") : String(findDeep(resp, "ratePlanId") ?? "");
+        console.log("[SupplierMapping] Input:", { elongHotelId, elongRoomId, elongRateplanId });
+        if (elongHotelId && elongRoomId && elongRateplanId) {
+          try {
+            const guid = findDeep(resp, "logId") || findDeep(resp, "guid") || "";
+            const mappingResp = await api.querySupplierMapping({
+              from: "",
+              logId: String(guid),
+              realRequest: { elongHotelId, elongRoomId, elongRateplanId },
+            });
+            console.log("[SupplierMapping] Response:", mappingResp);
+            for (const m of (cfg.supplierExtractMappings ?? [])) {
+              const val = findDeep(mappingResp, m.sourceField);
+              if (val !== undefined && val !== null && val !== "") {
+                const strVal = String(val);
+                // always store in extracted by field name so it shows in result
+                extracted[m.sourceField] = strVal;
+                if (m.targetParamKey) {
+                  extracted[m.targetParamKey] = strVal;
+                  dynamicValues.value[m.targetParamKey] = strVal;
+                }
+              }
+            }
+          } catch (e) {
+            console.warn("[SupplierMapping] Error:", e);
+          }
+        } else {
+          console.log("[SupplierMapping] Skipped — missing values:", { elongHotelId, elongRoomId, elongRateplanId });
+        }
+      }
+
+      // requestTime 特殊处理：自动设置查询时间范围（无需配置提取映射）
+      const rtRaw = findDeep(resp, "requestTime");
+      if (rtRaw) {
+        const rtDate = tryParseDate(String(rtRaw));
+        if (rtDate) {
+          const windowBefore = cfg.requestTimeWindowBefore ?? cfg.requestTimeWindow ?? 5;
+          const windowAfter = cfg.requestTimeWindowAfter ?? cfg.requestTimeWindow ?? 5;
+          const before = new Date(rtDate.getTime() - windowBefore * 60_000);
+          const after = new Date(rtDate.getTime() + windowAfter * 60_000);
+          const fmt = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.000`;
+          timeFrom.value = fmt(before);
+          timeTo.value = fmt(after);
+        }
+      }
+      execResults.value[node.id] = {
+        nodeId: node.id,
+        status: "success",
+        health: "ok",
+        durationMs: Date.now() - start,
+        result: null,
+        jcpResult: resp,
+        uiLink: "",
+        error: "",
+        extractedParams: extracted,
+      };
+    } catch (err: unknown) {
+      execResults.value[node.id] = {
+        nodeId: node.id,
+        status: "error",
+        health: "error",
+        durationMs: Date.now() - start,
+        result: null,
+        uiLink: "",
+        error: String(err),
+      };
+    }
+  }
+
+  // Phase B: execute skynet_query nodes in parallel (dynamic values now include jcp extracted params)
 
   const promises = queryNodes.map(async (node) => {
     const start = Date.now();
@@ -480,7 +743,7 @@ async function executeNodes(onlySelected = false) {
   });
 
   flow.value.nodes
-    .filter((n) => n.type !== "skynet_query" && targetNodeIds.has(n.id))
+    .filter((n) => n.type !== "skynet_query" && n.type !== "jcp_order" && targetNodeIds.has(n.id))
     .forEach((node) => {
       execResults.value[node.id] = {
         nodeId: node.id,
@@ -501,8 +764,34 @@ function healthIcon(health: string) {
   return health === "ok" ? "🟢" : health === "warning" ? "🟡" : health === "error" ? "🔴" : "⚪";
 }
 
+/** 刷新流程配置（不清空已填参数和执行结果） */
+async function refreshFlow() {
+  if (!flow.value || store.snapshotMode) return;
+  const savedValues = { ...dynamicValues.value };
+  try {
+    flow.value = await api.getFlow(flowId.value);
+    // 恢复已填值，仅对仍存在的参数 key 恢复
+    flow.value.dynamicParams.forEach((p: DynamicParam) => {
+      dynamicValues.value[p.key] = savedValues[p.key] ?? p.defaultValue ?? "";
+    });
+    showFeedback("已刷新节点配置");
+  } catch {
+    showFeedback("刷新失败");
+  }
+}
+
+/** 快速清空面板参数 */
+function clearParams() {
+  if (!flow.value) return;
+  flow.value.dynamicParams.forEach((p: DynamicParam) => {
+    dynamicValues.value[p.key] = "";
+  });
+  paramErrors.value = {};
+  showFeedback("参数已清空");
+}
+
 function nodeTypeLabel(type: string) {
-  return type === "skynet_query" ? "天网查询" : type === "checklist" ? "Checklist" : type === "info" ? "信息" : "链接";
+  return type === "skynet_query" ? "天网查询" : type === "checklist" ? "Checklist" : type === "info" ? "信息" : type === "jcp_order" ? "产品组成单" : "链接";
 }
 
 function toggleNotes(nodeId: string) {
@@ -523,6 +812,29 @@ function parseOption(opt: string): { value: string; label: string } {
 /** 判断当前值是否匹配某个选项的 value */
 function matchesOption(options: string[], val: string): boolean {
   return options.some((opt) => parseOption(opt).value === val);
+}
+
+function applyNodeGroup(group: NodeGroup) {
+  selectedNodeIds.value = new Set(group.nodeIds);
+}
+
+function saveCurrentAsGroup() {
+  const name = groupNameInput.value.trim();
+  if (!name || !flow.value) return;
+  const group: NodeGroup = {
+    id: Date.now().toString(36),
+    name,
+    nodeIds: [...selectedNodeIds.value],
+  };
+  flow.value.nodeGroups = [...(flow.value.nodeGroups ?? []), group];
+  groupNameInput.value = "";
+  persistFlow();
+}
+
+function deleteNodeGroup(groupId: string) {
+  if (!flow.value) return;
+  flow.value.nodeGroups = (flow.value.nodeGroups ?? []).filter((g) => g.id !== groupId);
+  persistFlow();
 }
 
 function onOptionSelect(paramKey: string, value: string) {
@@ -595,10 +907,25 @@ async function applySnippet(paramKey: string, value: string) {
     <div v-if="activeTab === 'execute'" class="flex-1 overflow-y-auto p-6">
       <!-- 动态参数 + 时间 -->
       <div class="bg-surface rounded-xl border border-border p-4 mb-6 space-y-4">
-        <div v-if="flow.dynamicParams.length > 0" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          <div v-for="param in flow.dynamicParams" :key="param.key" class="min-w-0">
+        <!-- JCP 运行时查询维度选择 -->
+        <div v-if="flow.nodes.some(n => n.type === 'jcp_order' && (n.config as JcpOrderConfig).queryField === 'runtime')" class="flex flex-wrap gap-4">
+          <div v-for="node in flow.nodes.filter(n => n.type === 'jcp_order' && (n.config as JcpOrderConfig).queryField === 'runtime')" :key="'jcp-field-' + node.id" class="flex items-center gap-2 text-sm">
+            <span class="text-xs text-text-secondary shrink-0">{{ node.label }} 查询维度</span>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="radio" :value="'traceId'" v-model="jcpQueryFieldOverrides[node.id]" class="accent-primary" />
+              <span class="text-xs">traceId</span>
+            </label>
+            <label class="flex items-center gap-1 cursor-pointer">
+              <input type="radio" :value="'orderId'" v-model="jcpQueryFieldOverrides[node.id]" class="accent-primary" />
+              <span class="text-xs">orderId</span>
+            </label>
+          </div>
+        </div>
+        <div v-if="flow.dynamicParams.filter(p => !p.hidden).length > 0" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <div v-for="param in flow.dynamicParams.filter(p => !p.hidden)" :key="param.key" class="min-w-0 transition-opacity" :class="{ 'opacity-35 pointer-events-none': activeParamKeys && !activeParamKeys.has(param.key) }">
             <label class="block text-xs text-text-secondary mb-1 truncate" :title="param.label">
-              {{ param.label }} <span v-if="param.required" class="text-error">*</span>
+              {{ param.label }} <span v-if="param.required" :class="activeParamKeys && !activeParamKeys.has(param.key) ? 'text-text-secondary/50' : 'text-error'">*</span>
+              <span v-if="param.paramType && param.paramType !== 'text'" class="ml-1 text-[10px] px-1 py-0.5 bg-cyan-50 text-cyan-600 rounded">{{ param.paramType === 'datetime' ? '日期时间' : param.paramType === 'date' ? '日期' : param.paramType === 'timestamp_ms' ? '毫秒戳' : param.paramType === 'timestamp_s' ? '秒戳' : param.paramType === 'day_timestamp_s' ? '天戳' : param.paramType }}</span>
             </label>
             <!-- 输入行：input + hint popover -->
             <div class="flex items-center gap-1">
@@ -617,7 +944,7 @@ async function applySnippet(paramKey: string, value: string) {
               <template v-else-if="param.options?.length">
                 <select
                   v-if="!customInputKeys[param.key]"
-                  :value="matchesOption(param.options, dynamicValues[param.key]) ? dynamicValues[param.key] : ''"
+                  :value="dynamicValues[param.key]"
                   class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
                   :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
                   @change="onOptionSelect(param.key, ($event.target as HTMLSelectElement).value); paramErrors[param.key] = false"
@@ -641,16 +968,35 @@ async function applySnippet(paramKey: string, value: string) {
                   >选项</button>
                 </div>
               </template>
-              <!-- 无 options：普通 input -->
-              <input
-                v-else
-                v-model="dynamicValues[param.key]"
-                :placeholder="param.defaultValue || param.label"
-                class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
-                :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
-                @input="paramErrors[param.key] = false"
-                @focus="($event.target as HTMLInputElement).select()"
-              />
+              <!-- 无 options：按类型显示输入 -->
+              <template v-else>
+                <!-- 日期时间类型：用 datetime-local，显示为人类可读 -->
+                <input
+                  v-if="param.paramType === 'datetime' || param.paramType === 'timestamp_ms' || param.paramType === 'timestamp_s' || param.paramType === 'day_timestamp_s'"
+                  type="datetime-local"
+                  :value="toDatetimeLocal(dynamicValues[param.key])"
+                  class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                  :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+                  @change="onDatetimeChange(param, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  v-else-if="param.paramType === 'date'"
+                  type="date"
+                  :value="toDateInput(dynamicValues[param.key])"
+                  class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                  :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+                  @change="onDateChange(param, ($event.target as HTMLInputElement).value)"
+                />
+                <input
+                  v-else
+                  v-model="dynamicValues[param.key]"
+                  :placeholder="param.defaultValue || param.label"
+                  class="flex-1 min-w-0 px-3 py-1.5 text-sm border rounded-lg outline-none focus:border-primary"
+                  :class="paramErrors[param.key] ? 'border-error bg-red-50' : 'border-border'"
+                  @input="paramErrors[param.key] = false"
+                  @focus="($event.target as HTMLInputElement).select()"
+                />
+              </template>
               <!-- Hint Popover -->
               <ParamHintPopover
                 v-if="param.hint"
@@ -702,6 +1048,20 @@ async function applySnippet(paramKey: string, value: string) {
             {{ Object.values(execResults).filter(r => r.status === 'success').length }}
             / {{ Object.keys(execResults).length }} 完成
           </span>
+          <div class="ml-auto flex items-center gap-2">
+            <button
+              v-if="!store.snapshotMode"
+              class="px-3 py-1.5 text-xs border border-border text-text-secondary rounded-lg hover:border-primary hover:text-primary transition-colors"
+              :disabled="executing"
+              title="刷新节点配置，不清空已填参数"
+              @click="refreshFlow"
+            >↻ 刷新</button>
+            <button
+              class="px-3 py-1.5 text-xs border border-border text-text-secondary rounded-lg hover:border-red-300 hover:text-red-500 transition-colors"
+              title="清空所有参数输入"
+              @click="clearParams"
+            >✕ 清空参数</button>
+          </div>
         </div>
       </div>
 
@@ -728,10 +1088,21 @@ async function applySnippet(paramKey: string, value: string) {
       </div>
 
       <!-- 节点选择与结果 -->
+      <!-- 节点分组快选（只读，分组在编排模式管理） -->
+      <div v-if="(flow.nodeGroups ?? []).length" class="flex items-center gap-2 mb-3 flex-wrap">
+        <span class="text-xs text-text-secondary shrink-0">分组:</span>
+        <button
+          v-for="group in (flow.nodeGroups ?? [])"
+          :key="group.id"
+          class="inline-flex items-center gap-1 px-3 py-1 text-xs rounded-full border border-primary/30 text-primary hover:bg-blue-50 transition-colors"
+          @click="applyNodeGroup(group)"
+        >{{ group.name }} ({{ group.nodeIds.length }})</button>
+      </div>
+
       <div class="flex items-center gap-2 mb-4">
         <label class="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer select-none">
           <input type="checkbox" v-model="selectAllNodes" class="rounded" />
-          全选查询节点 ({{ selectedNodeIds.size }}/{{ flow.nodes.filter(n => n.type === 'skynet_query').length }})
+          全选查询节点 ({{ selectedNodeIds.size }}/{{ flow.nodes.filter(n => n.type === 'skynet_query' || n.type === 'jcp_order').length }})
         </label>
       </div>
 
@@ -740,13 +1111,13 @@ async function applySnippet(paramKey: string, value: string) {
           v-for="node in flow.nodes"
           :key="node.id"
           class="bg-surface rounded-xl border overflow-hidden"
-          :class="node.type === 'skynet_query' && selectedNodeIds.has(node.id) ? 'border-primary/40' : 'border-border'"
+          :class="(node.type === 'skynet_query' || node.type === 'jcp_order') && selectedNodeIds.has(node.id) ? 'border-primary/40' : 'border-border'"
         >
           <div class="px-4 py-3 bg-surface-alt border-b border-border">
             <div class="flex items-center justify-between">
               <div class="flex items-center gap-2">
                 <input
-                  v-if="node.type === 'skynet_query'"
+                  v-if="node.type === 'skynet_query' || node.type === 'jcp_order'"
                   type="checkbox"
                   :checked="selectedNodeIds.has(node.id)"
                   class="rounded"
@@ -800,6 +1171,11 @@ async function applySnippet(paramKey: string, value: string) {
             :result="execResults[node.id]"
             :global-search="globalSearch"
             :force-expand="allExpanded"
+          />
+          <JcpOrderResult
+            v-else-if="node.type === 'jcp_order'"
+            :node="node"
+            :result="execResults[node.id] ?? { nodeId: node.id, status: 'pending', health: 'unknown', durationMs: 0, result: null, uiLink: '', error: '' }"
           />
           <div v-else-if="node.type === 'info'">
             <button class="w-full px-4 py-2 flex items-center gap-1 text-xs text-text-secondary hover:bg-surface-alt transition-colors" @click="toggleNodeContent(node.id)">
@@ -877,6 +1253,70 @@ async function applySnippet(paramKey: string, value: string) {
               <span v-if="!paramUsageMap.get(p.key)?.length" class="text-[10px] text-text-secondary/50 pt-0.5">未被引用</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      <!-- 节点分组管理 -->
+      <div class="bg-surface rounded-xl border border-border mb-6">
+        <button
+          class="w-full px-4 py-3 flex items-center justify-between text-sm font-medium"
+          @click="groupSectionExpanded = !groupSectionExpanded"
+        >
+          <span>节点分组 <span class="text-text-secondary font-normal">({{ (flow.nodeGroups ?? []).length }} 个)</span></span>
+          <span class="text-text-secondary text-xs">{{ groupSectionExpanded ? '▾' : '▸' }}</span>
+        </button>
+        <div v-if="groupSectionExpanded" class="px-4 pb-4 space-y-4 border-t border-border">
+          <!-- 已有分组 -->
+          <div class="pt-3">
+            <div v-if="!(flow.nodeGroups ?? []).length" class="text-xs text-text-secondary">暂无分组</div>
+            <div v-else class="flex flex-wrap gap-2">
+              <div
+                v-for="group in (flow.nodeGroups ?? [])"
+                :key="group.id"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-lg border border-border bg-surface-alt"
+              >
+                <span class="font-medium">{{ group.name }}</span>
+                <span class="text-text-secondary/60">({{ group.nodeIds.length }} 节点)</span>
+                <button class="ml-1 text-text-secondary/50 hover:text-red-500 transition-colors" @click="deleteNodeGroup(group.id)">&times;</button>
+              </div>
+            </div>
+          </div>
+          <!-- 勾选节点 -->
+          <div class="space-y-1">
+            <div class="flex items-center justify-between mb-1">
+              <span class="text-xs text-text-secondary font-medium">勾选节点</span>
+              <button class="text-[10px] text-primary hover:underline" @click="selectAllNodes = !selectAllNodes">全选/全不选</button>
+            </div>
+            <label
+              v-for="node in flow.nodes.filter(n => n.type === 'skynet_query' || n.type === 'jcp_order')"
+              :key="node.id"
+              class="flex items-center gap-2 py-1 px-2 rounded hover:bg-surface-alt cursor-pointer text-sm select-none"
+            >
+              <input
+                type="checkbox"
+                :checked="selectedNodeIds.has(node.id)"
+                class="rounded accent-primary"
+                @change="toggleNodeSelection(node.id)"
+              />
+              <span class="truncate">{{ node.label }}</span>
+              <span class="text-[10px] text-text-secondary shrink-0">{{ nodeTypeLabel(node.type) }}</span>
+            </label>
+          </div>
+          <!-- 保存分组 -->
+          <div class="flex items-center gap-2">
+            <input
+              v-model="groupNameInput"
+              placeholder="分组名称"
+              class="flex-1 px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+              @keydown.enter="saveCurrentAsGroup"
+            />
+            <button
+              class="px-3 py-1.5 text-sm bg-primary text-white rounded-lg hover:bg-primary-hover disabled:opacity-40 transition-colors"
+              :disabled="!groupNameInput.trim() || selectedNodeIds.size === 0"
+              @click="saveCurrentAsGroup"
+            >保存分组</button>
+          </div>
+          <div v-if="selectedNodeIds.size === 0" class="text-[11px] text-text-secondary/60">请先勾选节点</div>
         </div>
       </div>
 

@@ -20,6 +20,8 @@ const list = ref<ParamItem[]>(
     options: p.options ? [...p.options] : [],
     snippets: p.snippets ? [...p.snippets] : [],
     allowCustom: p.allowCustom ?? true,
+    hidden: p.hidden ?? false,
+    paramType: p.paramType ?? "text",
     _uid: nextUid++,
     _optionsText: (p.options ?? []).join("\n"),
     _snippetsText: (p.snippets ?? []).join("\n"),
@@ -50,6 +52,8 @@ function addParam() {
     options: [],
     snippets: [],
     allowCustom: true,
+    hidden: false,
+    paramType: "text" as const,
     _uid: nextUid++,
     _optionsText: "",
     _snippetsText: "",
@@ -107,6 +111,8 @@ function handleSave() {
       defaultValue: p.defaultValue,
       hint: p.hint,
       allowCustom: p.allowCustom,
+      hidden: p.hidden,
+      paramType: p.paramType,
       options: p._optionsText
         ? p._optionsText.split("\n").map((s) => s.trim()).filter(Boolean)
         : [],
@@ -120,6 +126,8 @@ function handleSave() {
       options: p.options.length > 0 ? p.options : undefined,
       snippets: p.snippets.length > 0 ? p.snippets : undefined,
       hint: p.hint || undefined,
+      hidden: p.hidden || undefined,
+      paramType: p.paramType && p.paramType !== "text" ? p.paramType : undefined,
     }));
   emit("save", valid as DynamicParam[]);
 }
@@ -187,6 +195,8 @@ function handleSave() {
             <span class="text-xs font-mono text-primary/80 bg-blue-50 px-1.5 py-0.5 rounded shrink-0 min-w-[60px]">{{ item.key || '(未设置)' }}</span>
             <span class="text-sm truncate flex-1">{{ item.label || '(未命名)' }}</span>
             <span v-if="item.required" class="text-[10px] px-1.5 py-0.5 bg-red-50 text-error rounded shrink-0">必填</span>
+            <span v-if="item.hidden" class="text-[10px] px-1.5 py-0.5 bg-gray-100 text-text-secondary rounded shrink-0">隐藏</span>
+            <span v-if="item.paramType && item.paramType !== 'text'" class="text-[10px] px-1.5 py-0.5 bg-cyan-50 text-cyan-700 rounded shrink-0">{{ item.paramType }}</span>
             <span v-if="item.defaultValue" class="text-[10px] px-1.5 py-0.5 bg-surface-alt text-text-secondary rounded truncate max-w-[80px] shrink-0" :title="item.defaultValue">= {{ item.defaultValue }}</span>
             <span v-if="item._optionsText?.trim()" class="text-[10px] px-1.5 py-0.5 bg-violet-50 text-violet-600 rounded shrink-0">{{ item._optionsText.split('\n').filter(s => s.trim()).length }} 选项</span>
             <span v-if="item._snippetsText?.trim()" class="text-[10px] px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded shrink-0">{{ item._snippetsText.split('\n').filter(s => s.trim()).length }} 快捷</span>
@@ -227,6 +237,24 @@ function handleSave() {
                   <input type="checkbox" v-model="item.required" class="rounded" />
                   必填
                 </label>
+                <label class="flex items-center gap-1.5 text-xs cursor-pointer" title="隐藏参数不在执行面板显示，但内部仍可被节点绑定使用">
+                  <input type="checkbox" v-model="item.hidden" class="rounded" />
+                  隐藏
+                </label>
+                <div class="flex items-center gap-1">
+                  <label class="text-[10px] text-text-secondary">类型</label>
+                  <select
+                    v-model="item.paramType"
+                    class="px-1 py-0.5 text-[10px] border border-border rounded outline-none focus:border-primary"
+                  >
+                    <option value="text">文本</option>
+                    <option value="datetime">日期时间</option>
+                    <option value="date">日期</option>
+                    <option value="timestamp_ms">毫秒时间戳</option>
+                    <option value="timestamp_s">秒级时间戳</option>
+                    <option value="day_timestamp_s">天级时间戳</option>
+                  </select>
+                </div>
                 <div class="flex items-center gap-1 ml-auto" @click.stop>
                   <label class="text-[10px] text-text-secondary">移到第</label>
                   <input

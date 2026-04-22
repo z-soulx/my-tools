@@ -24,6 +24,7 @@ const restrictions = ref<SnapshotRestrictions>({
 });
 const exporting = ref(false);
 const feedback = ref("");
+const dataVersion = ref("1.0");
 
 const selectAllFlows = computed({
   get: () => selectedFlowIds.value.size === store.flows.length && store.flows.length > 0,
@@ -94,6 +95,7 @@ async function handleExport() {
       Array.from(selectedChecklistIds.value),
       Array.from(selectedRecoveryIds.value),
       restrictions.value,
+      dataVersion.value,
       path,
     );
     feedback.value = `快照已导出到: ${path}`;
@@ -186,6 +188,20 @@ const totalSelected = computed(() => selectedFlowIds.value.size + selectedCheckl
                 <div class="text-[10px] text-text-secondary">{{ group.steps.length }} 步骤</div>
               </div>
             </label>
+          </div>
+        </div>
+
+        <!-- 数据版本号 -->
+        <div>
+          <label class="text-sm font-medium block mb-1">数据版本号</label>
+          <div class="flex items-center gap-2">
+            <input
+              v-model="dataVersion"
+              type="text"
+              placeholder="如: 1.0"
+              class="w-32 px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
+            />
+            <span class="text-xs text-text-secondary">与飞书远程配置 <code class="bg-surface-alt px-1 rounded">latest_data_version</code> 对比，用于推送更新提示</span>
           </div>
         </div>
 

@@ -42,11 +42,13 @@ impl SkynetClient {
             Self::apply_time_defaults(obj);
             Self::ensure_api_defaults(obj);
 
-            // 天网 API 要求 indexContext 中的双引号以 \" 形式传递（额外转义），
-            // 例如用户输入 "innId":"WYN5300072" 需要变成 \"innId\":\"WYN5300072\"
+            // 天网 API 要求 indexContext 中的双引号以 \" 形式传递。
+            // 支持用户用单引号 ' 书写模板（更友好），自动转换为双引号再转义。
+            // 例如用户输入 'innId':'WYN5300072' → \"innId\":\"WYN5300072\"
             if let Some(val) = obj.get("indexContext").and_then(|v| v.as_str()) {
                 if !val.is_empty() {
-                    let escaped = val.replace('"', "\\\"");
+                    let normalized = val.replace('\'', "\"");
+                    let escaped = normalized.replace('"', "\\\"");
                     obj.insert("indexContext".to_string(), Value::String(escaped));
                 }
             }
@@ -126,14 +128,9 @@ impl SkynetClient {
             data.insert("filter2".to_string(), Value::String(f2));
 
             let msg = obj.get("indexContext").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            // 天网 UI 使用 Lucene 查询，日志中存储的是 \"key\":\"value\" 形式，
-            // Lucene 匹配字面量 \ 需要 \\，匹配字面量 " 需要 \"，
-            // 所以用户输入的每个 " 需要转换成 \\" (两个反斜杠 + 引号)
-            let escaped_msg = if msg.is_empty() {
-                msg
-            } else {
-                msg.replace('"', "\\\\\"")
-            };
+            // ' → " 规范化，然后将 \ 转义为 \\ (Lucene 特殊字符)。
+            // " 本身不转义：用户写 "asd 保持 "asd，写 \"asd 变成 \\"asd。
+            let escaped_msg = msg.replace('\'', "\"").replace('\\', "\\\\");
             data.insert("message".to_string(), Value::String(escaped_msg));
             if let Some(cid) = obj.get("contextId").and_then(|v| v.as_str()) {
                 if !cid.is_empty() {

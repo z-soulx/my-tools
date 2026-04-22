@@ -74,6 +74,8 @@ pub fn run() {
             commands::get_auto_snapshot,
             commands::get_app_mode,
             commands::check_remote_config,
+            commands::query_jcp_order,
+            commands::query_supplier_mapping,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

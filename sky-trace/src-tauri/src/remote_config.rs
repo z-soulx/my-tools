@@ -46,6 +46,9 @@ pub struct RemoteConfig {
     pub update_notes: String,
     pub features: HashMap<String, bool>,
     pub announcement: Option<Announcement>,
+    pub latest_data_version: String,
+    pub data_update_url: String,
+    pub data_update_notes: String,
 }
 
 // ── Feishu API response shapes ──────────────────────────────────────────────
@@ -201,6 +204,10 @@ fn parse_record(fields: &serde_json::Value) -> Result<RemoteConfig, String> {
         })
     };
 
+    let latest_data_version = str_field(fields, "latest_data_version");
+    let data_update_url = str_field(fields, "data_update_url");
+    let data_update_notes = str_field(fields, "data_update_notes");
+
     Ok(RemoteConfig {
         enabled,
         min_version,
@@ -211,5 +218,8 @@ fn parse_record(fields: &serde_json::Value) -> Result<RemoteConfig, String> {
         update_notes,
         features,
         announcement,
+        latest_data_version,
+        data_update_url,
+        data_update_notes,
     })
 }

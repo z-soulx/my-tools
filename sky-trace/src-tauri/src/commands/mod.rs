@@ -187,6 +187,7 @@ pub fn export_snapshot(
     checklist_group_ids: Vec<i64>,
     recovery_group_ids: Vec<i64>,
     restrictions: SnapshotRestrictions,
+    data_version: String,
     output_path: String,
 ) -> Result<String, String> {
     let flows: Vec<TraceFlow> = flow_ids
@@ -210,6 +211,8 @@ pub fn export_snapshot(
     };
 
     let data = SnapshotData {
+        schema_version: snapshot::CURRENT_SCHEMA_VERSION,
+        data_version,
         flows,
         sky_apps,
         suppliers,
@@ -258,4 +261,47 @@ pub fn get_app_mode(state: State<'_, SnapshotState>) -> Result<AppMode, String> 
 #[tauri::command]
 pub async fn check_remote_config() -> Result<RemoteConfig, String> {
     crate::remote_config::fetch_config().await
+}
+
+// ── JCP Order ──
+
+#[tauri::command]
+pub async fn query_jcp_order(body: Value) -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
+
+    let resp = client
+        .post("http://jcp.mis.elong.com/orderparse/getBookingDetailAjax")
+        .header("Content-Type", "application/json;charset=UTF-8")
+        .header("X-Requested-With", "XMLHttpRequest")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("JCP请求失败: {}", e))?;
+
+    resp.json::<Value>().await.map_err(|e| format!("解析JCP响应失败: {}", e))
+}
+
+// ── Supplier Mapping ──
+
+#[tauri::command]
+pub async fn query_supplier_mapping(body: Value) -> Result<Value, String> {
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
+
+    let resp = client
+        .post("http://hotedcapi.vip.elong.com:8104/rest/com/elong/hotel/dc/entity/req/mapping/GetMapping4ProductReq")
+        .header("Content-Type", "application/json;charset=UTF-8")
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("供应商映射请求失败: {}", e))?;
+
+    resp.json::<Value>().await.map_err(|e| format!("解析供应商映射响应失败: {}", e))
 }

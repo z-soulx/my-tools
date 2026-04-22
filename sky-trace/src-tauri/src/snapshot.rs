@@ -11,6 +11,11 @@ use crate::storage::models::*;
 const SNAPSHOT_MAGIC: &[u8; 8] = b"SKYTRACE";
 const SNAPSHOT_VERSION: u8 = 1;
 const KEY_BYTES: &[u8; 32] = b"SkyTraceSnapshotKey2026!@#$%^&*(";
+pub const CURRENT_SCHEMA_VERSION: u32 = 1;
+
+fn default_schema_version() -> u32 {
+    1
+}
 
 /// 全局快照状态：启动时检测到 snapshot.skytrace 则填充
 pub struct SnapshotState {
@@ -20,6 +25,10 @@ pub struct SnapshotState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SnapshotData {
+    #[serde(default = "default_schema_version")]
+    pub schema_version: u32,
+    #[serde(default)]
+    pub data_version: String,
     pub flows: Vec<TraceFlow>,
     pub sky_apps: Vec<SkyApp>,
     pub suppliers: Vec<Supplier>,
@@ -61,6 +70,22 @@ impl Default for SnapshotRestrictions {
     }
 }
 
+fn migrate_snapshot(data: &mut SnapshotData) -> Result<(), String> {
+    if data.schema_version > CURRENT_SCHEMA_VERSION {
+        return Err(format!(
+            "快照版本 {} 高于当前支持版本 {}，请升级 SkyTrace",
+            data.schema_version, CURRENT_SCHEMA_VERSION
+        ));
+    }
+    while data.schema_version < CURRENT_SCHEMA_VERSION {
+        match data.schema_version {
+            // 未来在此添加迁移: 1 => migrate_v1_to_v2(data)?,
+            v => return Err(format!("未知快照版本: {}", v)),
+        }
+    }
+    Ok(())
+}
+
 pub fn export_snapshot(data: &SnapshotData) -> Result<Vec<u8>, String> {
     let json = serde_json::to_vec(data).map_err(|e| format!("序列化失败: {}", e))?;
 
@@ -100,7 +125,10 @@ pub fn import_snapshot(bytes: &[u8]) -> Result<SnapshotData, String> {
         .decrypt(nonce, encrypted)
         .map_err(|_| "解密失败：快照文件损坏或密钥不匹配".to_string())?;
 
-    serde_json::from_slice(&decrypted).map_err(|e| format!("解析快照数据失败: {}", e))
+    let mut data: SnapshotData =
+        serde_json::from_slice(&decrypted).map_err(|e| format!("解析快照数据失败: {}", e))?;
+    migrate_snapshot(&mut data)?;
+    Ok(data)
 }
 
 /// 检测可执行文件同级目录下的 snapshot.skytrace

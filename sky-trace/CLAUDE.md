@@ -45,6 +45,26 @@ src/                      src-tauri/src/
 - Router uses `createWebHashHistory()` — required for Tauri WebView
 - `__APP_VERSION__` injected by vite.config.ts from package.json
 
+### Node Types
+
+| Type | Display | Config |
+|------|---------|--------|
+| `skynet_query` | 天网查询 | `SkynetQueryConfig` |
+| `info` | 信息节点 | `InfoNodeConfig` |
+| `link` | 链接 | `LinkNodeConfig` |
+| `checklist` | 监控Checklist | `ChecklistNodeConfig` |
+| `jcp_order` | 产品组成单分析 | `JcpOrderConfig` — JCP API + optional supplier mapping |
+
+### Template Syntax (FieldBinding template mode)
+- `{{paramKey}}` — dynamic param value
+- `{{paramKey:split(delim,idx)}}` — split and take index
+- Time fields (checkInDate, checkOutDate, requestTime) auto-derive `_ymd`, `_full`, `_ts`, `_tsSec`, `_dayTs` suffixes
+
+### Execution
+- Two-phase: jcp_order (sequential, extract params) → skynet_query (parallel)
+- Incremental refresh: only selected nodes are re-executed, others preserved
+- Node groups: managed in edit mode (collapsible panel), quick-select chips in execute mode
+
 ## Common Tasks
 
 ### Add a Tauri command
@@ -73,3 +93,5 @@ src/                      src-tauri/src/
 - Don't resolve relative time in Rust — frontend handles it via `resolveRelativeTime()`
 - Don't hardcode time ranges in node configs
 - Don't add HTML5 drag & drop (Tauri WebView compat issues) — use arrows or position input
+- Don't use `window.prompt()` / `window.confirm()` — Tauri WebView doesn't support them; use inline UI
+- Don't use `!Array.isArray()` guard in recursive search — `findDeep`/`findInObj` must traverse array elements

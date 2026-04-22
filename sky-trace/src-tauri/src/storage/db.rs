@@ -104,6 +104,9 @@ impl Database {
         if !has_col("supplier", "deleted_at") {
             conn.execute_batch("ALTER TABLE supplier ADD COLUMN deleted_at TEXT;")?;
         }
+        if !has_col("trace_flow", "node_groups") {
+            conn.execute_batch("ALTER TABLE trace_flow ADD COLUMN node_groups TEXT NOT NULL DEFAULT '[]';")?;
+        }
         Ok(())
     }
 
@@ -236,12 +239,12 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let (sql, filter_val) = match supplier_id {
             Some(sid) => (
-                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, created_at, updated_at
+                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
                  FROM trace_flow WHERE supplier_id = ?1 AND deleted_at IS NULL ORDER BY sort_order DESC, id DESC",
                 Some(sid),
             ),
             None => (
-                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, created_at, updated_at
+                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
                  FROM trace_flow WHERE deleted_at IS NULL ORDER BY sort_order DESC, id DESC",
                 None,
             ),
@@ -259,7 +262,7 @@ impl Database {
     pub fn get_flow(&self, id: i64) -> Result<TraceFlow, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, created_at, updated_at
+            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
              FROM trace_flow WHERE id = ?1",
             params![id],
             Self::map_flow,
@@ -271,21 +274,22 @@ impl Database {
         let tags_json = serde_json::to_string(&input.tags).unwrap_or_default();
         let params_json = serde_json::to_string(&input.dynamic_params).unwrap_or_default();
         let nodes_json = serde_json::to_string(&input.nodes).unwrap_or_default();
+        let groups_json = serde_json::to_string(&input.node_groups).unwrap_or_default();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
         if let Some(id) = input.id {
             conn.execute(
-                "UPDATE trace_flow SET name=?1, description=?2, supplier_id=?3, tags=?4, dynamic_params=?5, nodes=?6, updated_at=?7 WHERE id=?8",
-                params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, now, id],
+                "UPDATE trace_flow SET name=?1, description=?2, supplier_id=?3, tags=?4, dynamic_params=?5, nodes=?6, node_groups=?7, updated_at=?8 WHERE id=?9",
+                params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, groups_json, now, id],
             )?;
             drop(conn);
             return self.get_flow(id);
         }
 
         conn.execute(
-            "INSERT INTO trace_flow (name, description, supplier_id, tags, dynamic_params, nodes, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)",
-            params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, now],
+            "INSERT INTO trace_flow (name, description, supplier_id, tags, dynamic_params, nodes, node_groups, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
+            params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, groups_json, now],
         )?;
         let id = conn.last_insert_rowid();
         drop(conn);
@@ -302,7 +306,7 @@ impl Database {
     pub fn get_deleted_flows(&self) -> Result<Vec<TraceFlow>, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, created_at, updated_at
+            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
              FROM trace_flow WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
         )?;
         let rows = stmt.query_map([], Self::map_flow)?;
@@ -341,6 +345,7 @@ impl Database {
             tags: original.tags,
             dynamic_params: original.dynamic_params,
             nodes: original.nodes,
+            node_groups: original.node_groups,
         };
         self.save_flow(input)
     }
@@ -536,6 +541,7 @@ impl Database {
         let tags_str: String = row.get(4)?;
         let params_str: String = row.get(7)?;
         let nodes_str: String = row.get(8)?;
+        let groups_str: String = row.get(9)?;
 
         Ok(TraceFlow {
             id: row.get(0)?,
@@ -547,8 +553,9 @@ impl Database {
             sort_order: row.get(6)?,
             dynamic_params: serde_json::from_str(&params_str).unwrap_or_default(),
             nodes: serde_json::from_str(&nodes_str).unwrap_or_default(),
-            created_at: row.get(9)?,
-            updated_at: row.get(10)?,
+            node_groups: serde_json::from_str(&groups_str).unwrap_or_default(),
+            created_at: row.get(10)?,
+            updated_at: row.get(11)?,
         })
     }
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useAppStore } from "@/stores/app";
-import type { TraceNode, SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, DynamicParam, FieldBinding } from "@/types";
+import type { TraceNode, SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, JcpOrderConfig, JcpExtractMapping, DynamicParam, FieldBinding } from "@/types";
 import { emptyBinding } from "@/types";
 import FieldBindingInput from "@/components/FieldBindingInput.vue";
 
@@ -36,8 +36,37 @@ const infoLinks = ref<{ label: string; url: string }[]>([]);
 const checklistGroupId = ref<number | undefined>();
 const checklistItemIds = ref<string[]>([]);
 
+// JcpOrderConfig fields
+const jcpQueryField = ref<"orderId" | "traceId" | "runtime">("traceId");
+const jcpQueryValue = ref<FieldBinding>(emptyBinding());
+const jcpRequestTimeWindowBefore = ref(5);
+const jcpRequestTimeWindowAfter = ref(5);
+const JCP_EXTRACT_FIELDS = ["roomTypeId", "shotelId", "ratePlanId", "checkInDate", "checkOutDate", "requestTime"] as const;
+const jcpExtractMappings = ref<JcpExtractMapping[]>(
+  JCP_EXTRACT_FIELDS.map((f) => ({ sourceField: f, targetParamKey: "" }))
+);
+const jcpSupplierMappingEnabled = ref(false);
+const SUPPLIER_EXTRACT_FIELDS = ["supplierHotelId", "supplierRatePlanId", "supplierRoomTypeId"] as const;
+const jcpSupplierExtractMappings = ref<JcpExtractMapping[]>(
+  SUPPLIER_EXTRACT_FIELDS.map((f) => ({ sourceField: f, targetParamKey: "" }))
+);
+
 // Common fields
 const notes = ref("");
+
+const derivedFormatsHelp = [
+  "{{参数key}}      — 原始值",
+  "{{参数key}}_ymd  — yyyy-MM-dd 日期",
+  "{{参数key}}_full — yyyy-MM-dd HH:mm:ss 完整时间",
+  "{{参数key}}_ts   — 毫秒时间戳",
+  "{{参数key}}_tsSec — 秒级时间戳",
+  "{{参数key}}_dayTs — 当日零点秒级时间戳",
+  "",
+  "分割语法: {{参数key:split(分隔符,索引)}}",
+  "例: 值 \"9_41_42177771\" 用 {{key:split(_,0)}} 取 \"9\"",
+  "    {{key:split(_,1)}} 取 \"41\"",
+  "    {{key:split(_,2)}} 取 \"42177771\"",
+].join("\n");
 
 onMounted(() => {
   if (!props.node) return;
@@ -65,6 +94,22 @@ onMounted(() => {
     const cfg = props.node.config as ChecklistNodeConfig;
     checklistGroupId.value = cfg.checklistGroupId;
     checklistItemIds.value = [...(cfg.itemIds || [])];
+  } else if (props.node.type === "jcp_order") {
+    const cfg = props.node.config as JcpOrderConfig;
+    jcpQueryField.value = cfg.queryField;
+    jcpQueryValue.value = cfg.queryValue;
+    const legacy = cfg.requestTimeWindow ?? 5;
+    jcpRequestTimeWindowBefore.value = cfg.requestTimeWindowBefore ?? legacy;
+    jcpRequestTimeWindowAfter.value = cfg.requestTimeWindowAfter ?? legacy;
+    jcpExtractMappings.value = JCP_EXTRACT_FIELDS.map((f) => {
+      const existing = cfg.extractMappings?.find((m) => m.sourceField === f);
+      return { sourceField: f, targetParamKey: existing?.targetParamKey ?? "" };
+    });
+    jcpSupplierMappingEnabled.value = cfg.supplierMappingEnabled ?? false;
+    jcpSupplierExtractMappings.value = SUPPLIER_EXTRACT_FIELDS.map((f) => {
+      const existing = cfg.supplierExtractMappings?.find((m) => m.sourceField === f);
+      return { sourceField: f, targetParamKey: existing?.targetParamKey ?? "" };
+    });
   }
 });
 
@@ -107,6 +152,18 @@ function handleSave() {
       checklistGroupId: checklistGroupId.value!,
       itemIds: checklistItemIds.value,
     } as ChecklistNodeConfig;
+  } else if (nodeType.value === "jcp_order") {
+    config = {
+      queryField: jcpQueryField.value,
+      queryValue: jcpQueryValue.value,
+      extractMappings: jcpExtractMappings.value.filter((m) => m.targetParamKey),
+      requestTimeWindowBefore: jcpRequestTimeWindowBefore.value,
+      requestTimeWindowAfter: jcpRequestTimeWindowAfter.value,
+      supplierMappingEnabled: jcpSupplierMappingEnabled.value || undefined,
+      supplierExtractMappings: jcpSupplierMappingEnabled.value
+        ? jcpSupplierExtractMappings.value.filter((m) => m.targetParamKey)
+        : undefined,
+    } as JcpOrderConfig;
   } else {
     config = {
       content: infoContent.value,
@@ -142,14 +199,14 @@ const saveDisabled = () => {
       <div class="px-6 py-4 space-y-4">
         <div>
           <label class="block text-sm font-medium mb-1">节点类型</label>
-          <div class="flex gap-2">
+          <div class="flex gap-2 flex-wrap">
             <button
-              v-for="t in (['skynet_query', 'info', 'checklist'] as const)"
+              v-for="t in (['skynet_query', 'info', 'checklist', 'jcp_order'] as const)"
               :key="t"
               class="px-3 py-1.5 text-sm rounded-lg border transition-colors"
               :class="nodeType === t ? 'border-primary bg-blue-50 text-primary' : 'border-border text-text-secondary hover:border-primary/30'"
               @click="nodeType = t"
-            >{{ t === 'skynet_query' ? '天网查询' : t === 'checklist' ? '监控Checklist' : '信息节点' }}</button>
+            >{{ t === 'skynet_query' ? '天网查询' : t === 'checklist' ? '监控Checklist' : t === 'jcp_order' ? '产品组成单分析' : '信息节点' }}</button>
           </div>
         </div>
 
@@ -259,6 +316,108 @@ const saveDisabled = () => {
             </div>
           </div>
         </template>
+
+        <template v-else-if="nodeType === 'jcp_order'">
+          <div>
+            <label class="block text-sm font-medium mb-1">查询维度</label>
+            <div class="flex gap-3">
+              <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" v-model="jcpQueryField" value="traceId" class="accent-primary" />
+                traceId
+              </label>
+              <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" v-model="jcpQueryField" value="orderId" class="accent-primary" />
+                订单号 (orderId)
+              </label>
+              <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                <input type="radio" v-model="jcpQueryField" value="runtime" class="accent-primary" />
+                运行时选择
+              </label>
+            </div>
+          </div>
+          <FieldBindingInput
+            :label="jcpQueryField === 'traceId' ? 'traceId' : jcpQueryField === 'orderId' ? '订单号' : '查询值'"
+            v-model="jcpQueryValue"
+            :dynamic-params="dynamicParams"
+          />
+          <div>
+            <label class="block text-sm font-medium mb-2">提取参数映射 <span class="text-xs text-text-secondary font-normal">(提取后自动填入动态参数)</span></label>
+            <div class="space-y-2 border border-border rounded-lg p-3 bg-surface-alt/30">
+              <div
+                v-for="(m, i) in jcpExtractMappings"
+                :key="m.sourceField"
+                class="flex items-center gap-2"
+              >
+                <span class="text-xs font-mono text-text-secondary w-28 shrink-0">{{ m.sourceField }}</span>
+                <span class="text-xs text-text-secondary">→</span>
+                <select
+                  v-model="jcpExtractMappings[i].targetParamKey"
+                  class="flex-1 px-2 py-1 border border-border rounded text-sm outline-none focus:border-primary"
+                >
+                  <option value="">不提取</option>
+                  <option v-for="p in dynamicParams" :key="p.key" :value="p.key">{{ p.label }} ({{ p.key }})</option>
+                </select>
+              </div>
+            </div>
+            <div class="mt-3 p-3 bg-amber-50/60 border border-amber-200/60 rounded-lg text-xs text-amber-800 leading-relaxed space-y-1.5">
+              <div class="font-medium">使用说明</div>
+              <div class="flex items-center gap-2 pt-0.5 flex-wrap">
+                <label class="shrink-0">requestTime 聚焦</label>
+                <span>前</span>
+                <input
+                  v-model.number="jcpRequestTimeWindowBefore"
+                  type="number"
+                  min="0"
+                  max="120"
+                  class="w-14 px-2 py-0.5 border border-amber-300 rounded text-xs outline-none focus:border-amber-500 bg-white/60 text-center"
+                />
+                <span>分钟 / 后</span>
+                <input
+                  v-model.number="jcpRequestTimeWindowAfter"
+                  type="number"
+                  min="0"
+                  max="120"
+                  class="w-14 px-2 py-0.5 border border-amber-300 rounded text-xs outline-none focus:border-amber-500 bg-white/60 text-center"
+                />
+                <span>分钟（时间范围 = requestTime - 前 ~ requestTime + 后）</span>
+              </div>
+              <div>时间字段 (checkInDate, checkOutDate, requestTime) 提取后自动派生多种格式的隐藏参数，可在后续天网节点的模板中直接引用：</div>
+              <pre class="font-mono bg-white/50 rounded px-2 py-1.5 text-xs whitespace-pre-wrap">{{ derivedFormatsHelp }}</pre>
+              <div>例: 动态参数 key 为 <span class="font-mono">cin</span>，模板中用 <span class="font-mono text-amber-600" v-text="'{{cin_ymd}}'"></span> 取日期。</div>
+              <div class="pt-1 border-t border-amber-200/60">requestTime 提取后，<span class="font-medium">查询时间范围自动聚焦到请求时间窗口</span>（无需配置提取映射即可生效）。</div>
+            </div>
+          </div>
+
+          <div>
+            <label class="flex items-center gap-2 text-sm font-medium cursor-pointer">
+              <input type="checkbox" v-model="jcpSupplierMappingEnabled" class="rounded accent-primary" />
+              启用供应商映射查询
+              <span class="text-xs text-text-secondary font-normal">（自动用 shotelId/roomTypeId/ratePlanId 查询供应商侧 ID）</span>
+            </label>
+            <div v-if="jcpSupplierMappingEnabled" class="mt-2 space-y-2 border border-border rounded-lg p-3 bg-surface-alt/30">
+              <div class="text-xs text-text-secondary mb-1">供应商映射提取</div>
+              <div
+                v-for="(m, i) in jcpSupplierExtractMappings"
+                :key="m.sourceField"
+                class="flex items-center gap-2"
+              >
+                <span class="text-xs font-mono text-text-secondary w-36 shrink-0">{{ m.sourceField }}</span>
+                <span class="text-xs text-text-secondary">→</span>
+                <select
+                  v-model="jcpSupplierExtractMappings[i].targetParamKey"
+                  class="flex-1 px-2 py-1 border border-border rounded text-sm outline-none focus:border-primary"
+                >
+                  <option value="">不提取</option>
+                  <option v-for="p in dynamicParams" :key="p.key" :value="p.key">{{ p.label }} ({{ p.key }})</option>
+                </select>
+              </div>
+              <div class="text-[11px] text-text-secondary/70 pt-1">
+                需要先配置 shotelId、roomTypeId、ratePlanId 的提取映射，供应商映射才能自动调用。
+              </div>
+            </div>
+          </div>
+        </template>
+
       </div>
 
       <div class="px-6 py-4 border-t border-border flex justify-end gap-3">

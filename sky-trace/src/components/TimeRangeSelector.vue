@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, watch, onMounted, onUnmounted } from "vue";
+import { ref, watch, nextTick, onMounted, onUnmounted } from "vue";
 
-defineProps<{
+const props = defineProps<{
   modelFrom: string;
   modelTo: string;
 }>();
@@ -29,6 +29,7 @@ const selectedPreset = ref(2);
 const customFrom = ref("");
 const customTo = ref("");
 const wrapperRef = ref<HTMLElement | null>(null);
+const settingFromProps = ref(false);
 
 const displayLabel = ref("最近30分钟");
 
@@ -51,6 +52,7 @@ function switchToCustom() {
 }
 
 function applyCustom() {
+  if (settingFromProps.value) return;
   if (!customFrom.value || !customTo.value) return;
   displayLabel.value = `${customFrom.value.replace("T", " ")} ~ ${customTo.value.replace("T", " ")}`;
   emit("update:modelFrom", formatForApi(customFrom.value));
@@ -58,6 +60,22 @@ function applyCustom() {
 }
 
 watch([customFrom, customTo], applyCustom);
+
+watch(
+  () => [props.modelFrom, props.modelTo] as const,
+  ([from, to]) => {
+    if (!from || !to) return;
+    if (from.startsWith("now") && to.startsWith("now")) return;
+    settingFromProps.value = true;
+    mode.value = "custom";
+    const fromShort = from.replace(/\.000$/, "").slice(0, 16);
+    const toShort = to.replace(/\.000$/, "").slice(0, 16);
+    customFrom.value = fromShort.replace(" ", "T");
+    customTo.value = toShort.replace(" ", "T");
+    displayLabel.value = `${fromShort.replace("T", " ")} ~ ${toShort.replace("T", " ")}`;
+    nextTick(() => { settingFromProps.value = false; });
+  },
+);
 
 function formatForInput(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");

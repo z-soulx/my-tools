@@ -76,6 +76,8 @@ Snapshot-mode-only restrictions (`store.snapshotRestrictions`) still apply on to
 
 DB file: `{app_data_dir}/skytrace.db`
 
+Key columns on `trace_flow`: `dynamic_params TEXT`, `nodes TEXT`, `node_groups TEXT` (all JSON).
+
 Soft-delete pattern: `deleted_at TEXT` column, filtered out in normal queries.
 
 ## Snapshot Format
@@ -96,31 +98,71 @@ Three modes for any query field (filter1, filter2, indexContext, contextId):
 | `dynamic` | `paramKey` → flow-level `DynamicParam` at runtime |
 | `template` | `templateValue` with `{{paramKey}}` interpolation |
 
-`resolveBinding()` and `extractTemplateParams()` in `src/types/index.ts`.
+Template transform syntax: `{{key:split(delimiter,index)}}`.
+Example: value `"9_41_42177771"`, `{{key:split(_,2)}}` → `"42177771"`.
+
+`resolveBinding()`, `applyTransform()`, and `extractTemplateParams()` in `src/types/index.ts`.
 
 ## DynamicParam Enhancements
 
 - `hint` — multi-line tips shown at execution
 - `options` — predefined choices (`value|label` or plain text)
 - `allowCustom` — allow free input when options exist
+- `snippets` — quick-fill chips (`value|label` format)
+- `hidden` — param not shown in execute panel (used for internal derived values)
+- `paramType` — auto format conversion: `text | datetime | date | timestamp_ms | timestamp_s | day_timestamp_s`
 - Reordering via ▲▼ arrows or manual position input ("移到第 X 位")
 - No HTML5 drag & drop (Tauri WebView compat)
 
 ## Node Types
 
-| Type | Config struct |
-|------|--------------|
-| `skynet_query` | `SkynetQueryConfig` |
-| `info` | `InfoNodeConfig` |
-| `link` | `LinkNodeConfig` |
-| `checklist` | `ChecklistNodeConfig` |
+| Type | Config struct | Display | Component |
+|------|--------------|---------|-----------|
+| `skynet_query` | `SkynetQueryConfig` | 天网查询 | `NodeResult.vue` |
+| `info` | `InfoNodeConfig` | 信息节点 | inline in FlowDetail |
+| `link` | `LinkNodeConfig` | 链接 | inline in FlowDetail |
+| `checklist` | `ChecklistNodeConfig` | 监控Checklist | inline in FlowDetail |
+| `jcp_order` | `JcpOrderConfig` | 产品组成单分析 | `JcpOrderResult.vue` |
 
 Each has a form section in `NodeEditor.vue` and a render section in `FlowDetail.vue`.
 
+## JCP Order Node (产品组成单分析)
+
+Two-phase execution inside `executeNodes()`:
+
+1. **JCP API** — `POST http://jcp.mis.elong.com/orderparse/getBookingDetailAjax`
+   - Query by `orderId` or `traceId`
+   - Extracts: roomTypeId, shotelId, ratePlanId, checkInDate, checkOutDate, requestTime
+2. **Supplier Mapping** (optional, when `supplierMappingEnabled`) — `POST http://hotedcapi.vip.elong.com:8104/.../GetMapping4ProductReq`
+   - Input: elongHotelId (shotelId), elongRoomId (roomTypeId), elongRateplanId (ratePlanId)
+   - Extracts: supplierHotelId, supplierRatePlanId, supplierRoomTypeId
+
+Time fields auto-derive suffixed params: `_ymd`, `_full`, `_ts`, `_tsSec`, `_dayTs`.
+requestTime auto-focuses TimeRangeSelector (before/after window configurable separately via `requestTimeWindowBefore`/`requestTimeWindowAfter`).
+
+Recursive deep search (`findDeep`) traverses both objects and arrays to find fields at any depth.
+
+Rust commands: `query_jcp_order`, `query_supplier_mapping` in `commands/mod.rs`.
+
+## Node Groups
+
+Stored on `TraceFlow.nodeGroups: NodeGroup[]` (DB column: `node_groups TEXT DEFAULT '[]'`).
+
+- **Edit mode**: collapsible panel with checkboxes per queryable node + inline name input to save groups
+- **Execute mode**: read-only chips that set `selectedNodeIds` on click
+
 ## Execution Modes
 
-- `executeNodes(false)` — execute all nodes
-- `executeNodes(true)` — execute only checkbox-selected nodes (`selectedNodeIds`)
+Two-phase execution in `executeNodes()`:
+- **Phase A**: `jcp_order` nodes run sequentially (extract params for downstream use)
+- **Phase B**: `skynet_query` nodes run in parallel (using extracted params + user input)
+
+Incremental: only targeted node results are cleared; other results preserved.
+
+Toolbar actions in execute panel:
+- **Refresh** (`refreshFlow`) — reloads flow config from DB, preserves user-entered `dynamicValues`
+- **Clear params** (`clearParams`) — resets all `dynamicValues` to empty
+- **Node group chips** — click to apply saved selection
 
 ## AI Analysis (Shell)
 

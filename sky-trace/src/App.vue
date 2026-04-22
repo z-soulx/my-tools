@@ -7,6 +7,7 @@ import SnapshotExportDialog from "@/components/SnapshotExportDialog.vue";
 import RemoteLockScreen from "@/components/RemoteLockScreen.vue";
 import AnnouncementBanner from "@/components/AnnouncementBanner.vue";
 import UpdateDialog from "@/components/UpdateDialog.vue";
+import DataUpdateDialog from "@/components/DataUpdateDialog.vue";
 import { open } from "@tauri-apps/plugin-dialog";
 
 const store = useAppStore();
@@ -21,6 +22,11 @@ const forceUpdateUrl = ref("");
 const showUpdateDialog = ref(false);
 const pendingUpdateUrl = ref("");
 const pendingUpdateNotes = ref("");
+// Data update dialog
+const showDataUpdateDialog = ref(false);
+const pendingDataVersion = ref("");
+const pendingDataUpdateUrl = ref("");
+const pendingDataUpdateNotes = ref("");
 
 function compareSemver(a: string, b: string): number {
   const pa = a.split(".").map(Number);
@@ -61,12 +67,21 @@ onMounted(async () => {
       if (snapshot) {
         store.enterSnapshotMode(snapshot, true);
         booting.value = false;
-        // Still check for optional updates after entering snapshot mode
+        // Check for optional software update
         if (config.latestVersion && compareSemver(config.latestVersion, appVersion) > 0) {
           const isMac = navigator.userAgent.toLowerCase().includes("mac");
           pendingUpdateUrl.value = isMac ? config.updateUrlMac : config.updateUrlWin;
           pendingUpdateNotes.value = config.updateNotes;
           showUpdateDialog.value = true;
+        }
+        // Check for data file update
+        if (config.latestDataVersion && config.dataUpdateUrl &&
+            store.snapshotDataVersion &&
+            compareSemver(config.latestDataVersion, store.snapshotDataVersion) > 0) {
+          pendingDataVersion.value = config.latestDataVersion;
+          pendingDataUpdateUrl.value = config.dataUpdateUrl;
+          pendingDataUpdateNotes.value = config.dataUpdateNotes;
+          showDataUpdateDialog.value = true;
         }
         return;
       }
@@ -167,6 +182,14 @@ async function handleImportSnapshot() {
       :notes="pendingUpdateNotes"
       :latest-version="store.remoteConfig?.latestVersion ?? ''"
       @close="showUpdateDialog = false"
+    />
+
+    <DataUpdateDialog
+      v-if="showDataUpdateDialog"
+      :latest-data-version="pendingDataVersion"
+      :data-update-url="pendingDataUpdateUrl"
+      :notes="pendingDataUpdateNotes"
+      @close="showDataUpdateDialog = false"
     />
   </div>
 </template>

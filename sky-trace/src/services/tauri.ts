@@ -13,6 +13,7 @@ import type {
   SnapshotData,
   SnapshotRestrictions,
   RemoteConfig,
+  NodeGroup,
 } from "@/types";
 
 export async function getSkyApps(): Promise<SkyApp[]> {
@@ -59,6 +60,7 @@ export async function saveFlow(flow: {
   tags: string[];
   dynamicParams: DynamicParam[];
   nodes: TraceNode[];
+  nodeGroups?: NodeGroup[];
 }): Promise<TraceFlow> {
   return invoke("save_flow", { flow });
 }
@@ -183,9 +185,10 @@ export async function exportSnapshot(
   checklistGroupIds: number[],
   recoveryGroupIds: number[],
   restrictions: SnapshotRestrictions,
+  dataVersion: string,
   outputPath: string,
 ): Promise<string> {
-  return invoke("export_snapshot", { flowIds, checklistGroupIds, recoveryGroupIds, restrictions, outputPath });
+  return invoke("export_snapshot", { flowIds, checklistGroupIds, recoveryGroupIds, restrictions, dataVersion, outputPath });
 }
 
 export async function importSnapshot(path: string): Promise<SnapshotData> {
@@ -202,4 +205,18 @@ export async function getAppMode(): Promise<{ snapshotOnly: boolean; hasSnapshot
 
 export async function checkRemoteConfig(): Promise<RemoteConfig> {
   return invoke("check_remote_config");
+}
+
+// ── JCP Order ──
+
+export async function queryJcpOrder(
+  body: { orderId?: string; traceId?: string }
+): Promise<any> {
+  return invoke("query_jcp_order", { body });
+}
+
+export async function querySupplierMapping(
+  body: { from: string; logId: string; realRequest: { elongHotelId: string; elongRoomId: string; elongRateplanId: string } }
+): Promise<any> {
+  return invoke("query_supplier_mapping", { body });
 }

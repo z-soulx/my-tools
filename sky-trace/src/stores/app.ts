@@ -29,6 +29,8 @@ export const useAppStore = defineStore("app", () => {
     hideUiLink: true,
   });
 
+  const snapshotDataVersion = ref<string>("");
+
   // Remote config state
   const remoteConfig = ref<RemoteConfig | null>(null);
   const remoteCheckFailed = ref(false);
@@ -116,6 +118,7 @@ export const useAppStore = defineStore("app", () => {
   function enterSnapshotMode(data: SnapshotData, auto = false) {
     snapshotMode.value = true;
     isAutoSnapshot.value = auto;
+    snapshotDataVersion.value = data.dataVersion ?? "";
     snapshotRestrictions.value = data.restrictions;
     skyApps.value = data.skyApps;
     suppliers.value = data.suppliers;
@@ -173,6 +176,7 @@ export const useAppStore = defineStore("app", () => {
     selectedSupplierId,
     loading,
     snapshotMode,
+    snapshotDataVersion,
     isAutoSnapshot,
     snapshotOnlyBuild,
     missingSnapshot,

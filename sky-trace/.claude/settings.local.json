@@ -7,7 +7,8 @@
       "WebFetch(domain:feishu.doubao.com)",
       "WebSearch",
       "WebFetch(domain:gitee.com)",
-      "WebFetch(domain:help.gitee.com)"
+      "WebFetch(domain:help.gitee.com)",
+      "Bash(git *)"
     ]
   }
 }
