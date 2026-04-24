@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from "vue";
 import { useAppStore } from "@/stores/app";
-import type { TraceNode, SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, JcpOrderConfig, JcpExtractMapping, DynamicParam, FieldBinding } from "@/types";
+import type { TraceNode, SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, JcpOrderConfig, JcpExtractMapping, DynamicParam, FieldBinding, AdvancedSearchItem } from "@/types";
 import { emptyBinding } from "@/types";
 import FieldBindingInput from "@/components/FieldBindingInput.vue";
 
@@ -27,6 +27,8 @@ const indexContext = ref<FieldBinding>(emptyBinding());
 const contextId = ref<FieldBinding>(emptyBinding());
 const pageSize = ref(100);
 const fieldHints = ref<Record<string, string>>({});
+const advancedSearchItems = ref<AdvancedSearchItem[]>([]);
+const showAdvancedSearch = ref(false);
 
 // InfoNodeConfig fields
 const infoContent = ref("");
@@ -41,7 +43,7 @@ const jcpQueryField = ref<"orderId" | "traceId" | "runtime">("traceId");
 const jcpQueryValue = ref<FieldBinding>(emptyBinding());
 const jcpRequestTimeWindowBefore = ref(5);
 const jcpRequestTimeWindowAfter = ref(5);
-const JCP_EXTRACT_FIELDS = ["roomTypeId", "shotelId", "ratePlanId", "checkInDate", "checkOutDate", "requestTime"] as const;
+const JCP_EXTRACT_FIELDS = ["roomTypeId", "shotelId", "ratePlanId", "checkInDate", "checkOutDate", "requestTime", "createDate"] as const;
 const jcpExtractMappings = ref<JcpExtractMapping[]>(
   JCP_EXTRACT_FIELDS.map((f) => ({ sourceField: f, targetParamKey: "" }))
 );
@@ -86,6 +88,8 @@ onMounted(() => {
     contextId.value = cfg.contextId ?? emptyBinding();
     pageSize.value = cfg.pageSize;
     fieldHints.value = cfg.fieldHints ?? {};
+    advancedSearchItems.value = cfg.advancedSearchItems ? cfg.advancedSearchItems.map(item => ({ ...item, value: { ...item.value } })) : [];
+    showAdvancedSearch.value = advancedSearchItems.value.length > 0;
   } else if (props.node.type === "info") {
     const cfg = props.node.config as InfoNodeConfig;
     infoContent.value = cfg.content;
@@ -146,6 +150,7 @@ function handleSave() {
       contextId: contextId.value,
       pageSize: pageSize.value,
       fieldHints: Object.keys(fieldHints.value).some((k) => fieldHints.value[k]) ? fieldHints.value : undefined,
+      advancedSearchItems: advancedSearchItems.value.length > 0 ? advancedSearchItems.value : undefined,
     } as SkynetQueryConfig;
   } else if (nodeType.value === "checklist") {
     config = {
@@ -187,6 +192,14 @@ const saveDisabled = () => {
   if (nodeType.value === "checklist" && !checklistGroupId.value) return true;
   return false;
 };
+
+function addAdvancedSearchItem() {
+  advancedSearchItems.value.push({ filter: "indexContext", compare: "like", value: emptyBinding() });
+}
+
+function removeAdvancedSearchItem(index: number) {
+  advancedSearchItems.value.splice(index, 1);
+}
 </script>
 
 <template>
@@ -267,6 +280,41 @@ const saveDisabled = () => {
           <div>
             <label class="block text-xs text-text-secondary mb-1">每页条数</label>
             <input v-model.number="pageSize" type="number" min="1" max="500" class="w-32 px-3 py-1.5 border border-border rounded-lg text-sm outline-none focus:border-primary" />
+          </div>
+
+          <div class="border border-border rounded-lg p-3 space-y-3">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" v-model="showAdvancedSearch" class="rounded" />
+              <span class="text-sm font-medium">高级搜索条件 (advancedSearchItems)</span>
+              <span class="text-xs text-text-secondary">多条 like / nlike 并发过滤</span>
+            </label>
+
+            <template v-if="showAdvancedSearch">
+              <div v-for="(item, idx) in advancedSearchItems" :key="idx" class="space-y-1">
+                <div class="flex items-center gap-2">
+                  <select v-model="item.filter" class="px-2 py-1.5 border border-border rounded-lg text-xs outline-none focus:border-primary">
+                    <option value="indexContext">indexContext (Msg)</option>
+                    <option value="filter1">filter1</option>
+                    <option value="filter2">filter2</option>
+                  </select>
+                  <select v-model="item.compare" class="px-2 py-1.5 border border-border rounded-lg text-xs outline-none focus:border-primary">
+                    <option value="like">like（包含）</option>
+                    <option value="nlike">nlike（排除）</option>
+                  </select>
+                  <button @click="removeAdvancedSearchItem(idx)" class="ml-auto text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition-colors">删除</button>
+                </div>
+                <FieldBindingInput
+                  label="值"
+                  :model-value="item.value"
+                  @update:model-value="item.value = $event"
+                  :dynamic-params="dynamicParams"
+                />
+              </div>
+
+              <button @click="addAdvancedSearchItem" class="w-full text-xs text-primary border border-dashed border-primary/40 rounded-lg py-1.5 hover:bg-blue-50 transition-colors">
+                + 添加条件
+              </button>
+            </template>
           </div>
         </template>
 
@@ -379,12 +427,12 @@ const saveDisabled = () => {
                   max="120"
                   class="w-14 px-2 py-0.5 border border-amber-300 rounded text-xs outline-none focus:border-amber-500 bg-white/60 text-center"
                 />
-                <span>分钟（时间范围 = requestTime - 前 ~ requestTime + 后）</span>
+                <span>分钟（时间范围 = requestTime/createDate - 前 ~ requestTime/createDate + 后）</span>
               </div>
-              <div>时间字段 (checkInDate, checkOutDate, requestTime) 提取后自动派生多种格式的隐藏参数，可在后续天网节点的模板中直接引用：</div>
+              <div>时间字段 (checkInDate, checkOutDate, requestTime, createDate) 提取后自动派生多种格式的隐藏参数，可在后续天网节点的模板中直接引用：</div>
               <pre class="font-mono bg-white/50 rounded px-2 py-1.5 text-xs whitespace-pre-wrap">{{ derivedFormatsHelp }}</pre>
               <div>例: 动态参数 key 为 <span class="font-mono">cin</span>，模板中用 <span class="font-mono text-amber-600" v-text="'{{cin_ymd}}'"></span> 取日期。</div>
-              <div class="pt-1 border-t border-amber-200/60">requestTime 提取后，<span class="font-medium">查询时间范围自动聚焦到请求时间窗口</span>（无需配置提取映射即可生效）。</div>
+              <div class="pt-1 border-t border-amber-200/60">requestTime / createDate 提取后，<span class="font-medium">查询时间范围自动聚焦到请求时间窗口</span>（无需配置提取映射即可生效）。</div>
             </div>
           </div>
 

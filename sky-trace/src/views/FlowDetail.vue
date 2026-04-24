@@ -548,7 +548,7 @@ async function executeNodes(onlySelected = false) {
         return undefined;
       };
 
-      const TIME_FIELDS = new Set(["checkInDate", "checkOutDate", "requestTime"]);
+      const TIME_FIELDS = new Set(["checkInDate", "checkOutDate", "requestTime", "createDate"]);
 
       const tryParseDate = (raw: string): Date | null => {
         if (!raw) return null;
@@ -638,7 +638,7 @@ async function executeNodes(onlySelected = false) {
       }
 
       // requestTime 特殊处理：自动设置查询时间范围（无需配置提取映射）
-      const rtRaw = findDeep(resp, "requestTime");
+      const rtRaw = findDeep(resp, "createDate");
       if (rtRaw) {
         const rtDate = tryParseDate(String(rtRaw));
         if (rtDate) {
@@ -696,6 +696,13 @@ async function executeNodes(onlySelected = false) {
       pageSize: cfg.pageSize,
       beginTime: resolvedBegin,
       endTime: resolvedEnd,
+      ...(cfg.advancedSearchItems?.length ? {
+        advancedSearchItems: cfg.advancedSearchItems.map(item => ({
+          filter: item.filter,
+          compare: item.compare,
+          value: [resolveField(item.value)],
+        }))
+      } : {}),
     } : { error: `未找到天网应用配置 (id=${cfg.skyAppId})` };
 
     try {

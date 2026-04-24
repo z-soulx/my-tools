@@ -201,7 +201,7 @@ const totalSelected = computed(() => selectedFlowIds.value.size + selectedCheckl
               placeholder="如: 1.0"
               class="w-32 px-3 py-1.5 text-sm border border-border rounded-lg outline-none focus:border-primary"
             />
-            <span class="text-xs text-text-secondary">与飞书远程配置 <code class="bg-surface-alt px-1 rounded">latest_data_version</code> 对比，用于推送更新提示</span>
+            <span class="text-xs text-text-secondary">与配置 <code class="bg-surface-alt px-1 rounded">latest_data_version</code> 对比，用于推送更新提示</span>
           </div>
         </div>
 

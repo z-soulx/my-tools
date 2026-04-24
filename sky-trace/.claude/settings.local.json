@@ -1,6 +1,9 @@
 {
   "permissions": {
     "allow": [
+      "WriteFile(*)",           // 👈 允许修改任何文件，解决“编辑询问”的核心
+      "ReadFile(*)",            // 👈 允许读取任何文件
+      "CreateFile(*)", 
       "Bash(npx vue-tsc:*)",
       "Bash(cargo check:*)",
       "Bash(npm run:*)",
@@ -8,7 +11,8 @@
       "WebSearch",
       "WebFetch(domain:gitee.com)",
       "WebFetch(domain:help.gitee.com)",
-      "Bash(git *)"
+      "Bash(git *)",
+      "Bash(npx tsc *)"
     ]
   }
 }

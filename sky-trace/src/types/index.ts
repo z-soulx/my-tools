@@ -109,6 +109,12 @@ export interface TraceNode {
   notes?: string;
 }
 
+export interface AdvancedSearchItem {
+  filter: string;
+  compare: "like" | "nlike";
+  value: FieldBinding;
+}
+
 /**
  * 天网查询节点配置
  * 固定值直接填写，动态值绑定到流程的 DynamicParam
@@ -124,6 +130,7 @@ export interface SkynetQueryConfig {
   contextId: FieldBinding;
   pageSize: number;
   fieldHints?: Record<string, string>;
+  advancedSearchItems?: AdvancedSearchItem[];
 }
 
 export interface InfoNodeConfig {
