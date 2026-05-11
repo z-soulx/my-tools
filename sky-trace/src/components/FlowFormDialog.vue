@@ -20,6 +20,7 @@ const form = ref({
   description: props.sourceFlow?.description ?? "",
   supplierId: props.sourceFlow?.supplierId ?? null as number | null,
   tags: props.sourceFlow?.tags.join(", ") ?? "",
+  aiPrompt: props.sourceFlow?.aiPrompt ?? "",
 });
 
 const dynamicParams = ref<DynamicParam[]>(
@@ -54,6 +55,7 @@ async function handleSave() {
       tags: form.value.tags.split(",").map((t) => t.trim()).filter(Boolean),
       dynamicParams: dynamicParams.value.filter((p) => p.key.trim() && p.label.trim()),
       nodes: props.sourceFlow ? props.sourceFlow.nodes : [],
+      aiPrompt: form.value.aiPrompt.trim() || null,
     };
     // Edit mode: pass id to update
     if (isEdit && props.sourceFlow) {
@@ -86,6 +88,19 @@ const buttonText = isEdit ? '保存' : isDuplicate ? '复制并保存' : '创建
         <div>
           <label class="block text-sm font-medium mb-1">描述</label>
           <textarea v-model="form.description" placeholder="排查场景说明..." rows="2" class="w-full px-3 py-2 border border-border rounded-lg text-sm outline-none focus:border-primary resize-none" />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-1">
+            <span class="text-violet-600">✨ AI 流程级提示词</span>
+            <span class="text-xs text-text-secondary font-normal ml-2">（可选，AI 分析时作为整体业务上下文）</span>
+          </label>
+          <textarea
+            v-model="form.aiPrompt"
+            placeholder="例如：本流程用于排查铂涛 Mapping 不生效问题，关注 priority<=1 的日志、查找 hotelId 是否成功映射..."
+            rows="3"
+            class="w-full px-3 py-2 border border-violet-200 rounded-lg text-sm outline-none focus:border-violet-400 resize-none"
+          />
         </div>
 
         <div class="grid grid-cols-2 gap-3">

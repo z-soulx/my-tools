@@ -28,6 +28,7 @@ src/                      src-tauri/src/
 - `src-tauri/src/query_engine/client.rs` — Skynet API client
 - `src-tauri/src/remote_config.rs` — Feishu Bitable remote control
 - `src-tauri/src/snapshot.rs` — AES-256-GCM snapshot encrypt/decrypt
+- `src-tauri/src/ai/` — AI config cache (`config.rs`) + OpenAI-compatible streaming client (`client.rs`)
 
 → Deep architecture details: [docs/architecture.md](docs/architecture.md)
 
@@ -65,6 +66,16 @@ src/                      src-tauri/src/
 - Incremental refresh: only selected nodes are re-executed, others preserved
 - Node groups: managed in edit mode (collapsible panel), quick-select chips in execute mode
 
+### AI Analysis
+- Remote config via Feishu Bitable: `ai_enabled`, `ai_base_url`, `ai_token`, `ai_model`, `ai_default_system_prompt`
+- Rust backend proxy (`src-tauri/src/ai/`) — token never reaches webview
+- OpenAI-compatible `/v1/chat/completions` with SSE streaming via Tauri events
+- Context builder in `src/services/aiContext.ts` — assembles flow/node prompts + execution data
+- Per-flow `aiPrompt`, `aiQuickActions`, `aiHintCollapsed`; per-node `aiPrompt`, `aiQuickActions`
+- Markdown rendering via `marked` in AI response panels
+
+→ Deep dive: [docs/ai-analysis.md](docs/ai-analysis.md)
+
 ## Common Tasks
 
 ### Add a Tauri command
@@ -95,3 +106,4 @@ src/                      src-tauri/src/
 - Don't add HTML5 drag & drop (Tauri WebView compat issues) — use arrows or position input
 - Don't use `window.prompt()` / `window.confirm()` — Tauri WebView doesn't support them; use inline UI
 - Don't use `!Array.isArray()` guard in recursive search — `findDeep`/`findInObj` must traverse array elements
+- Don't expose AI token to webview — all API calls go through Rust backend; frontend only sees `AiStatus { enabled, hasToken, model }`

@@ -49,6 +49,17 @@ pub struct RemoteConfig {
     pub latest_data_version: String,
     pub data_update_url: String,
     pub data_update_notes: String,
+    // AI 配置（OpenAI 兼容协议）
+    #[serde(default)]
+    pub ai_enabled: bool,
+    #[serde(default)]
+    pub ai_base_url: String,
+    #[serde(default)]
+    pub ai_token: String,
+    #[serde(default)]
+    pub ai_model: String,
+    #[serde(default)]
+    pub ai_default_system_prompt: String,
 }
 
 // ── Feishu API response shapes ──────────────────────────────────────────────
@@ -208,6 +219,12 @@ fn parse_record(fields: &serde_json::Value) -> Result<RemoteConfig, String> {
     let data_update_url = str_field(fields, "data_update_url");
     let data_update_notes = str_field(fields, "data_update_notes");
 
+    let ai_enabled = bool_field(fields, "ai_enabled");
+    let ai_base_url = str_field(fields, "ai_base_url");
+    let ai_token = str_field(fields, "ai_token");
+    let ai_model = str_field(fields, "ai_model");
+    let ai_default_system_prompt = str_field(fields, "ai_default_system_prompt");
+
     Ok(RemoteConfig {
         enabled,
         min_version,
@@ -221,5 +238,10 @@ fn parse_record(fields: &serde_json::Value) -> Result<RemoteConfig, String> {
         latest_data_version,
         data_update_url,
         data_update_notes,
+        ai_enabled,
+        ai_base_url,
+        ai_token,
+        ai_model,
+        ai_default_system_prompt,
     })
 }

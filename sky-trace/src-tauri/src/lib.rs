@@ -3,6 +3,7 @@ mod query_engine;
 pub mod remote_config;
 pub mod snapshot;
 mod storage;
+pub mod ai;
 
 use query_engine::SkynetClient;
 use snapshot::SnapshotState;
@@ -76,6 +77,8 @@ pub fn run() {
             commands::check_remote_config,
             commands::query_jcp_order,
             commands::query_supplier_mapping,
+            commands::ai_status,
+            commands::ai_chat_stream,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

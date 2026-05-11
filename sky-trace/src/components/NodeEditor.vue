@@ -43,7 +43,7 @@ const jcpQueryField = ref<"orderId" | "traceId" | "runtime">("traceId");
 const jcpQueryValue = ref<FieldBinding>(emptyBinding());
 const jcpRequestTimeWindowBefore = ref(5);
 const jcpRequestTimeWindowAfter = ref(5);
-const JCP_EXTRACT_FIELDS = ["roomTypeId", "shotelId", "ratePlanId", "checkInDate", "checkOutDate", "requestTime", "createDate"] as const;
+const JCP_EXTRACT_FIELDS = ["roomTypeId", "shotelId", "ratePlanId", "checkInDate", "checkOutDate", "requestTime", "createDate", "bookingVo.orderId", "classMessageVoList.0.messageLogEntityList.0.messageLogEntity.traceId"] as const;
 const jcpExtractMappings = ref<JcpExtractMapping[]>(
   JCP_EXTRACT_FIELDS.map((f) => ({ sourceField: f, targetParamKey: "" }))
 );
@@ -55,6 +55,8 @@ const jcpSupplierExtractMappings = ref<JcpExtractMapping[]>(
 
 // Common fields
 const notes = ref("");
+const aiPrompt = ref("");
+const aiQuickActions = ref<string[]>([]);
 
 const derivedFormatsHelp = [
   "{{参数key}}      — 原始值",
@@ -75,6 +77,8 @@ onMounted(() => {
   nodeType.value = props.node.type;
   label.value = props.node.label;
   notes.value = props.node.notes ?? "";
+  aiPrompt.value = props.node.aiPrompt ?? "";
+  aiQuickActions.value = props.node.aiQuickActions ? [...props.node.aiQuickActions] : [];
 
   if (props.node.type === "skynet_query") {
     const cfg = props.node.config as SkynetQueryConfig;
@@ -150,7 +154,7 @@ function handleSave() {
       contextId: contextId.value,
       pageSize: pageSize.value,
       fieldHints: Object.keys(fieldHints.value).some((k) => fieldHints.value[k]) ? fieldHints.value : undefined,
-      advancedSearchItems: advancedSearchItems.value.length > 0 ? advancedSearchItems.value : undefined,
+      advancedSearchItems: showAdvancedSearch.value && advancedSearchItems.value.length > 0 ? advancedSearchItems.value : undefined,
     } as SkynetQueryConfig;
   } else if (nodeType.value === "checklist") {
     config = {
@@ -183,6 +187,8 @@ function handleSave() {
     sortOrder: props.node?.sortOrder ?? 0,
     config,
     notes: notes.value || undefined,
+    aiPrompt: aiPrompt.value || undefined,
+    aiQuickActions: aiQuickActions.value.filter(a => a.trim()) .length ? aiQuickActions.value.filter(a => a.trim()) : undefined,
   });
 }
 
@@ -192,6 +198,10 @@ const saveDisabled = () => {
   if (nodeType.value === "checklist" && !checklistGroupId.value) return true;
   return false;
 };
+
+function onToggleAdvancedSearch() {
+  if (!showAdvancedSearch.value) advancedSearchItems.value = [];
+}
 
 function addAdvancedSearchItem() {
   advancedSearchItems.value.push({ filter: "indexContext", compare: "like", value: emptyBinding() });
@@ -231,6 +241,29 @@ function removeAdvancedSearchItem(index: number) {
         <div>
           <label class="block text-sm font-medium mb-1">参考备注</label>
           <textarea v-model="notes" rows="2" placeholder="排查参考信息，如错误码映射、注意事项等..." class="w-full px-3 py-2 border border-border rounded-lg text-sm outline-none focus:border-primary resize-none" />
+        </div>
+
+        <div>
+          <label class="block text-sm font-medium mb-1">
+            <span class="text-violet-600">✨ AI 节点级提示词</span>
+            <span class="text-xs text-text-secondary font-normal ml-2">（可选，AI 解读该节点结果时使用）</span>
+          </label>
+          <textarea
+            v-model="aiPrompt"
+            rows="2"
+            placeholder="例如：本节点查询 mapping 服务日志，priority<=1 视为异常；msg 中含 NotMatched 即映射缺失"
+            class="w-full px-3 py-2 border border-violet-200 rounded-lg text-sm outline-none focus:border-violet-400 resize-none"
+          />
+          <div class="mt-2">
+            <label class="block text-[11px] text-violet-500 font-medium mb-1">节点 AI 快捷问题（可选）</label>
+            <div class="space-y-1">
+              <div v-for="(_, i) in aiQuickActions" :key="i" class="flex items-center gap-1">
+                <input v-model="aiQuickActions[i]" class="flex-1 px-2 py-1 text-xs border border-violet-200 rounded outline-none focus:border-violet-400" placeholder="快捷问题文本" />
+                <button class="text-error text-xs px-1" @click="aiQuickActions.splice(i, 1)">×</button>
+              </div>
+            </div>
+            <button class="mt-1 text-[11px] text-violet-500 hover:underline" @click="aiQuickActions.push('')">+ 添加</button>
+          </div>
         </div>
 
         <template v-if="nodeType === 'skynet_query'">
@@ -284,7 +317,7 @@ function removeAdvancedSearchItem(index: number) {
 
           <div class="border border-border rounded-lg p-3 space-y-3">
             <label class="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" v-model="showAdvancedSearch" class="rounded" />
+              <input type="checkbox" v-model="showAdvancedSearch" class="rounded" @change="onToggleAdvancedSearch" />
               <span class="text-sm font-medium">高级搜索条件 (advancedSearchItems)</span>
               <span class="text-xs text-text-secondary">多条 like / nlike 并发过滤</span>
             </label>
@@ -396,7 +429,7 @@ function removeAdvancedSearchItem(index: number) {
                 :key="m.sourceField"
                 class="flex items-center gap-2"
               >
-                <span class="text-xs font-mono text-text-secondary w-28 shrink-0">{{ m.sourceField }}</span>
+                <span class="text-xs font-mono text-text-secondary w-56 shrink-0 break-all">{{ m.sourceField }}</span>
                 <span class="text-xs text-text-secondary">→</span>
                 <select
                   v-model="jcpExtractMappings[i].targetParamKey"

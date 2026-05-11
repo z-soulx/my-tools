@@ -164,8 +164,58 @@ Toolbar actions in execute panel:
 - **Clear params** (`clearParams`) — resets all `dynamicValues` to empty
 - **Node group chips** — click to apply saved selection
 
-## AI Analysis (Shell)
+## AI Analysis
 
-`NodeResult.vue`: per-node panel (`showAiPanel`, `aiPrompt`, `aiResponse`).  
-`FlowDetail.vue`: global modal (`showGlobalAi`, `globalAiPrompt`, `globalAiResponse`).  
-Currently placeholder — replace `'功能开发中...'` with actual API call when ready.
+AI augments user-orchestrated troubleshooting flows — it interprets collected data, not replaces the flow.
+
+### Key Files
+
+| File | Role |
+|------|------|
+| `src-tauri/src/ai/config.rs` | In-memory `AiConfig` cache (`RwLock<Option<AiConfig>>`) |
+| `src-tauri/src/ai/client.rs` | `chat_stream()` — POST to OpenAI-compatible endpoint, emit SSE chunks as Tauri events |
+| `src/services/aiContext.ts` | `buildGlobalAnalysisMessages()` / `buildNodeAnalysisMessages()` — assembles system + user prompts |
+| `src/views/FlowDetail.vue` | Global AI dialog + per-node AI dialog, streaming + markdown rendering |
+
+### Data Flow
+
+```
+User clicks "AI 全局分析"
+  → aiContext.ts builds [system, user] messages
+    (remote default prompt + flow.aiPrompt + node prompts + truncated exec data)
+  → invoke("ai_chat_stream", { sessionId, messages })
+  → Rust reads AiConfig from process memory (token never in webview)
+  → POST {base_url}/chat/completions (stream: true)
+  → SSE lines parsed → app.emit("ai:chunk:{sessionId}", delta)
+  → Frontend listen() accumulates text → marked.parse() → v-html
+```
+
+### Prompt Hierarchy
+
+1. `remoteConfig.aiDefaultSystemPrompt` (remote fallback)
+2. `flow.aiPrompt` (flow-level business context)
+3. `node.aiPrompt` (node-level, only for per-node analysis)
+4. Execution data (truncated: 30 logs/node, 500 chars/msg, 2KB JCP)
+5. User input or quick-action preset
+
+### DB Columns on `trace_flow`
+
+| Column | Type | Purpose |
+|--------|------|---------|
+| `ai_prompt` | TEXT | Flow-level AI prompt |
+| `ai_quick_actions` | TEXT (JSON array) | Custom quick-action presets for global analysis dialog |
+| `ai_hint_collapsed` | INTEGER (0/1) | Whether to hide prompt detail in execute view |
+
+Node-level `aiPrompt` and `aiQuickActions` ride the `nodes` JSON column via `#[serde(default)]`.
+
+### Remote Config Fields (Feishu Bitable)
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `ai_enabled` | 复选框 | Master switch |
+| `ai_base_url` | 文本 | OpenAI-compatible endpoint (e.g. `https://xxx/v1`) |
+| `ai_token` | 文本 | Bearer token (stays in Rust process memory only) |
+| `ai_model` | 文本 | Model ID (e.g. `gpt-4o-mini`) |
+| `ai_default_system_prompt` | 文本 | Default system prompt for all flows |
+
+→ Full design rationale: [docs/ai-analysis.md](ai-analysis.md)

@@ -1,6 +1,7 @@
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, State};
 
+use crate::ai::client::{AiStatus, ChatMessage};
 use crate::query_engine::SkynetClient;
 use crate::remote_config::RemoteConfig;
 use crate::snapshot::{self, SnapshotData, SnapshotRestrictions, SnapshotState};
@@ -260,7 +261,26 @@ pub fn get_app_mode(state: State<'_, SnapshotState>) -> Result<AppMode, String> 
 
 #[tauri::command]
 pub async fn check_remote_config() -> Result<RemoteConfig, String> {
-    crate::remote_config::fetch_config().await
+    let cfg = crate::remote_config::fetch_config().await?;
+    // 同步刷新进程内 AI 配置缓存（token 仅驻内存）
+    crate::ai::config::set_cached(&cfg);
+    Ok(cfg)
+}
+
+// ── AI ──
+
+#[tauri::command]
+pub fn ai_status() -> AiStatus {
+    crate::ai::client::status()
+}
+
+#[tauri::command]
+pub async fn ai_chat_stream(
+    app: AppHandle,
+    session_id: String,
+    messages: Vec<ChatMessage>,
+) -> Result<(), String> {
+    crate::ai::client::chat_stream(app, session_id, messages).await
 }
 
 // ── JCP Order ──
@@ -270,6 +290,7 @@ pub async fn query_jcp_order(body: Value) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
         .timeout(std::time::Duration::from_secs(30))
+        .no_proxy()                    // 强烈建议加上
         .build()
         .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
 
@@ -282,7 +303,25 @@ pub async fn query_jcp_order(body: Value) -> Result<Value, String> {
         .await
         .map_err(|e| format!("JCP请求失败: {}", e))?;
 
-    resp.json::<Value>().await.map_err(|e| format!("解析JCP响应失败: {}", e))
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("读取JCP响应失败: {}", e))?;
+
+    if !status.is_success() {
+        let snippet: String = text.chars().take(300).collect();
+        return Err(format!("JCP返回 HTTP {}: {}", status.as_u16(), snippet));
+    }
+
+    if text.trim().is_empty() {
+        return Err("解析JCP响应失败: 响应体为空".to_string());
+    }
+
+    serde_json::from_str::<Value>(&text).map_err(|e| {
+        let snippet: String = text.chars().take(300).collect();
+        format!("解析JCP响应失败: {} | 响应内容: {}", e, snippet)
+    })
 }
 
 // ── Supplier Mapping ──
@@ -291,17 +330,25 @@ pub async fn query_jcp_order(body: Value) -> Result<Value, String> {
 pub async fn query_supplier_mapping(body: Value) -> Result<Value, String> {
     let client = reqwest::Client::builder()
         .danger_accept_invalid_certs(true)
+        .no_proxy()                    // 强烈建议加上
         .timeout(std::time::Duration::from_secs(30))
         .build()
         .map_err(|e| format!("创建HTTP客户端失败: {}", e))?;
 
     let resp = client
+//         .post("http://dashboard2.mis.elong.com/proxy/10.52.104.3:8104/rest/com/elong/hotel/dc/entity/req/mapping/GetMapping4ProductReq")
         .post("http://hotedcapi.vip.elong.com:8104/rest/com/elong/hotel/dc/entity/req/mapping/GetMapping4ProductReq")
         .header("Content-Type", "application/json;charset=UTF-8")
         .json(&body)
         .send()
         .await
         .map_err(|e| format!("供应商映射请求失败: {}", e))?;
+    #[cfg(debug_assertions)]
+    eprintln!("[供应商映射] 请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
 
-    resp.json::<Value>().await.map_err(|e| format!("解析供应商映射响应失败: {}", e))
+    let body_text = resp.text().await
+        .map_err(|e| format!("读取响应体失败: {}", e))?;
+
+    serde_json::from_str(&body_text)
+        .map_err(|e| format!("解析供应商映射响应失败: {}", e))
 }

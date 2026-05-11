@@ -43,6 +43,8 @@ onMounted(async () => {
   try {
     const config = await api.checkRemoteConfig();
     store.remoteConfig = config;
+    // Refresh AI status after remote config (token cached in Rust process memory)
+    store.refreshAiStatus();
 
     if (!config.enabled) {
       // Kill switch — show lock screen with message

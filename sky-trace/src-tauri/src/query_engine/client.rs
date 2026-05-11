@@ -52,9 +52,28 @@ impl SkynetClient {
                     obj.insert("indexContext".to_string(), Value::String(escaped));
                 }
             }
+
+            // advancedSearchItems[*].value[*] 与 indexContext 保持一致：' → " → \"
+            if let Some(items) = obj.get_mut("advancedSearchItems").and_then(|v| v.as_array_mut()) {
+                for item in items.iter_mut() {
+                    if let Some(item_obj) = item.as_object_mut() {
+                        if let Some(values) = item_obj.get_mut("value").and_then(|v| v.as_array_mut()) {
+                            for val in values.iter_mut() {
+                                if let Some(s) = val.as_str() {
+                                    if !s.is_empty() {
+                                        let normalized = s.replace('\'', "\"");
+                                        let escaped = normalized.replace('"', "\\\"");
+                                        *val = Value::String(escaped);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        eprintln!("[SkyTrace] 请求 URL: {}", SKYNET_API_URL);
+        #[cfg(debug_assertions)]
         eprintln!("[SkyTrace] 请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
 
         let resp = self
@@ -72,13 +91,6 @@ impl SkynetClient {
             .text()
             .await
             .map_err(|e| format!("读取响应失败: {}", e))?;
-
-        eprintln!("[SkyTrace] 响应状态: {} | 长度: {} 字节", status.as_u16(), text.len());
-        if text.len() < 2000 {
-            eprintln!("[SkyTrace] 响应体: {}", text);
-        } else {
-            eprintln!("[SkyTrace] 响应体(截断): {}...", &text[..500]);
-        }
 
         if !status.is_success() {
             return Err(format!("HTTP {}: {}", status.as_u16(), text));

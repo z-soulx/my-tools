@@ -67,12 +67,21 @@ const debugJson = computed(() => {
   </div>
 
   <div v-else-if="result.status === 'success'" class="text-sm">
-    <!-- Debug 面板（默认展开，方便确认字段结构） -->
+    <!-- 调试信息面板 -->
     <div class="px-4 py-2 border-b border-border/50">
       <button class="text-xs text-text-secondary hover:text-text-primary" @click="showDebug = !showDebug">
-        {{ showDebug ? '▾' : '▸' }} 原始响应
+        {{ showDebug ? '▾' : '▸' }} 调试信息
       </button>
-      <pre v-if="showDebug" class="mt-2 text-xs text-text-secondary bg-surface p-3 rounded-lg overflow-auto max-h-60 border border-border/50">{{ debugJson }}</pre>
+      <div v-if="showDebug" class="mt-2 space-y-2">
+        <div v-if="result.requestParams">
+          <div class="text-[10px] font-medium text-text-secondary mb-1">请求参数</div>
+          <pre class="text-xs text-text-secondary bg-surface p-2 rounded-lg overflow-auto max-h-40 border border-border/50">{{ JSON.stringify(result.requestParams, null, 2) }}</pre>
+        </div>
+        <div>
+          <div class="text-[10px] font-medium text-text-secondary mb-1">原始响应</div>
+          <pre class="text-xs text-text-secondary bg-surface p-2 rounded-lg overflow-auto max-h-60 border border-border/50">{{ debugJson }}</pre>
+        </div>
+      </div>
     </div>
 
     <!-- 提取参数 -->

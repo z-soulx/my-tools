@@ -1,6 +1,6 @@
 import { defineStore } from "pinia";
 import { ref, computed } from "vue";
-import type { SkyApp, Supplier, TraceFlow, ChecklistGroup, RecoveryGroup, SnapshotRestrictions, SnapshotData, RemoteConfig } from "@/types";
+import type { SkyApp, Supplier, TraceFlow, ChecklistGroup, RecoveryGroup, SnapshotRestrictions, SnapshotData, RemoteConfig, AiStatus } from "@/types";
 import * as api from "@/services/tauri";
 
 export const useAppStore = defineStore("app", () => {
@@ -34,6 +34,21 @@ export const useAppStore = defineStore("app", () => {
   // Remote config state
   const remoteConfig = ref<RemoteConfig | null>(null);
   const remoteCheckFailed = ref(false);
+
+  // AI status (driven by remote config; refreshed after each checkRemoteConfig)
+  const aiStatus = ref<AiStatus | null>(null);
+
+  async function refreshAiStatus() {
+    try {
+      aiStatus.value = await api.aiStatus();
+    } catch {
+      aiStatus.value = null;
+    }
+  }
+
+  const aiAvailable = computed(
+    () => !!aiStatus.value?.enabled && !!aiStatus.value?.hasToken,
+  );
 
   const isRemoteLocked = computed(
     () => remoteCheckFailed.value || remoteConfig.value?.enabled === false
@@ -185,6 +200,9 @@ export const useAppStore = defineStore("app", () => {
     remoteCheckFailed,
     isRemoteLocked,
     featureEnabled,
+    aiStatus,
+    aiAvailable,
+    refreshAiStatus,
     filteredFlows,
     skyAppMap,
     supplierMap,

@@ -107,6 +107,8 @@ export interface TraceNode {
   sortOrder: number;
   config: SkynetQueryConfig | InfoNodeConfig | LinkNodeConfig | ChecklistNodeConfig | JcpOrderConfig;
   notes?: string;
+  aiPrompt?: string;
+  aiQuickActions?: string[];
 }
 
 export interface AdvancedSearchItem {
@@ -166,6 +168,9 @@ export interface TraceFlow {
   dynamicParams: DynamicParam[];
   nodes: TraceNode[];
   nodeGroups: NodeGroup[];
+  aiPrompt?: string;
+  aiQuickActions?: string[];
+  aiHintCollapsed?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -281,6 +286,23 @@ export interface RemoteConfig {
   latestDataVersion: string;
   dataUpdateUrl: string;
   dataUpdateNotes: string;
+  aiEnabled?: boolean;
+  aiBaseUrl?: string;
+  aiToken?: string;
+  aiModel?: string;
+  aiDefaultSystemPrompt?: string;
+}
+
+export interface AiStatus {
+  enabled: boolean;
+  hasToken: boolean;
+  model: string;
+  baseUrl: string;
+}
+
+export interface ChatMessage {
+  role: 'system' | 'user' | 'assistant';
+  content: string;
 }
 
 export type PriorityLevel = 0 | 1 | 2 | 3;

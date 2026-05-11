@@ -56,6 +56,12 @@ pub struct TraceFlow {
     pub nodes: Vec<TraceNode>,
     #[serde(default)]
     pub node_groups: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub ai_prompt: Option<String>,
+    #[serde(default)]
+    pub ai_quick_actions: Option<Vec<String>>,
+    #[serde(default)]
+    pub ai_hint_collapsed: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -72,6 +78,12 @@ pub struct TraceFlowInput {
     pub nodes: Vec<TraceNode>,
     #[serde(default)]
     pub node_groups: Vec<serde_json::Value>,
+    #[serde(default)]
+    pub ai_prompt: Option<String>,
+    #[serde(default)]
+    pub ai_quick_actions: Option<Vec<String>>,
+    #[serde(default)]
+    pub ai_hint_collapsed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -108,6 +120,10 @@ pub struct TraceNode {
     pub health_rules: Option<serde_json::Value>,
     #[serde(default)]
     pub notes: Option<String>,
+    #[serde(default)]
+    pub ai_prompt: Option<String>,
+    #[serde(default)]
+    pub ai_quick_actions: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

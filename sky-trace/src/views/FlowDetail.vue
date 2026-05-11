@@ -8,6 +8,10 @@ import type {
   SkynetQueryConfig, InfoNodeConfig, ChecklistNodeConfig, JcpOrderConfig, FieldBinding,
 } from "@/types";
 import { resolveBinding, resolveRelativeTime, extractTemplateParams } from "@/types";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { marked } from "marked";
+import { buildGlobalAnalysisMessages, buildNodeAnalysisMessages } from "@/services/aiContext";
 import NodeEditor from "@/components/NodeEditor.vue";
 import NodeResult from "@/components/NodeResult.vue";
 import JcpOrderResult from "@/components/JcpOrderResult.vue";
@@ -39,6 +43,18 @@ const selectedNodeIds = ref(new Set<string>());
 const showGlobalAi = ref(false);
 const globalAiPrompt = ref("");
 const globalAiResponse = ref("");
+const globalAiThinking = ref("");
+const globalAiRunning = ref(false);
+const globalAiError = ref("");
+
+// 节点级 AI 解读
+const showNodeAi = ref(false);
+const nodeAiTarget = ref<TraceNode | null>(null);
+const nodeAiPrompt = ref("");
+const nodeAiResponse = ref("");
+const nodeAiThinking = ref("");
+const nodeAiRunning = ref(false);
+const nodeAiError = ref("");
 const dragState = ref<{
   index: number;
   startY: number;
@@ -54,7 +70,7 @@ const showFlowInfoEditor = ref(false);
 const paramErrors = ref<Record<string, boolean>>({});
 const groupSectionExpanded = ref(false);
 const groupNameInput = ref("");
-const jcpQueryFieldOverrides = ref<Record<string, "orderId" | "traceId">>({});
+const execEpoch = ref(0);
 
 const flowId = computed(() => Number(route.params.id));
 
@@ -188,9 +204,6 @@ onMounted(async () => {
     flow.value!.nodes
       .filter((n) => n.type === "skynet_query" || n.type === "jcp_order")
       .forEach((n) => selectedNodeIds.value.add(n.id));
-    flow.value!.nodes
-      .filter((n) => n.type === "jcp_order" && (n.config as JcpOrderConfig).queryField === "runtime")
-      .forEach((n) => { jcpQueryFieldOverrides.value[n.id] = "traceId"; });
   } catch {
     router.push("/flows");
   }
@@ -217,6 +230,9 @@ async function persistFlow() {
     dynamicParams: flow.value.dynamicParams,
     nodes: flow.value.nodes,
     nodeGroups: flow.value.nodeGroups,
+    aiPrompt: flow.value.aiPrompt ?? null,
+    aiQuickActions: flow.value.aiQuickActions?.length ? flow.value.aiQuickActions : null,
+    aiHintCollapsed: flow.value.aiHintCollapsed ?? false,
   });
 }
 
@@ -371,7 +387,9 @@ async function exportFlow() {
     description: flow.value.description,
     tags: flow.value.tags,
     dynamicParams: flow.value.dynamicParams,
-    nodes: flow.value.nodes.map(({ type, label, config, notes }) => ({ type, label, config, notes })),
+    aiPrompt: flow.value.aiPrompt ?? null,
+    aiQuickActions: flow.value.aiQuickActions ?? [],
+    nodes: flow.value.nodes.map(({ type, label, config, notes, aiPrompt, aiQuickActions }) => ({ type, label, config, notes, aiPrompt, aiQuickActions })),
   };
   await clipCopy(JSON.stringify(data, null, 2), "flow_export");
 }
@@ -386,13 +404,17 @@ async function importFlow() {
       supplierId: flow.value?.supplierId ?? null,
       tags: data.tags || [],
       dynamicParams: data.dynamicParams || [],
-      nodes: (data.nodes || []).map((n: { type: string; label: string; config: unknown; notes?: string }, i: number) => ({
+      aiPrompt: data.aiPrompt ?? null,
+      aiQuickActions: data.aiQuickActions ?? null,
+      nodes: (data.nodes || []).map((n: { type: string; label: string; config: unknown; notes?: string; aiPrompt?: string; aiQuickActions?: string[] }, i: number) => ({
         id: `node_${Date.now()}_${i}`,
         type: n.type,
         label: n.label,
         sortOrder: i,
         config: n.config,
         notes: n.notes,
+        aiPrompt: n.aiPrompt,
+        aiQuickActions: n.aiQuickActions,
       })),
     });
     showImportDialog.value = false;
@@ -466,8 +488,23 @@ function onDateChange(param: DynamicParam, dateStr: string) {
   dynamicValues.value[param.key] = dateStr;
 }
 
+function forceStopExecution() {
+  // Bump epoch so in-flight promises from the previous run are ignored when they settle.
+  execEpoch.value++;
+  // Mark any still-running nodes as timed out.
+  for (const [id, r] of Object.entries(execResults.value)) {
+    if (r.status === "running") {
+      execResults.value[id] = { ...r, status: "error", health: "error", error: "已手动停止" };
+    }
+  }
+  executing.value = false;
+}
+
 async function executeNodes(onlySelected = false) {
   if (!flow.value) return;
+
+  execEpoch.value++;
+  const myEpoch = execEpoch.value;
 
   const targetNodeIds = onlySelected
     ? new Set(selectedNodeIds.value)
@@ -528,8 +565,10 @@ async function executeNodes(onlySelected = false) {
     const start = Date.now();
     const cfg = node.config as JcpOrderConfig;
     const queryValue = resolveField(cfg.queryValue);
+    const autoDetectJcpField = (value: string): "orderId" | "traceId" =>
+      /^\d{12}$/.test(value) ? "orderId" : "traceId";
     const field = cfg.queryField === "runtime"
-      ? jcpQueryFieldOverrides.value[node.id] ?? "traceId"
+      ? autoDetectJcpField(queryValue)
       : cfg.queryField;
     const body: Record<string, string> = { [field]: queryValue };
     try {
@@ -546,6 +585,22 @@ async function executeNodes(onlySelected = false) {
           }
         }
         return undefined;
+      };
+      // dot-path 提取：先用 findDeep 定位第一段（支持任意深度嵌套），再按剩余路径走
+      // 数字段视为数组下标，例如 "classMessageVoList.0.messageLogEntity.traceId"
+      const findAtPath = (obj: any, path: string[]): any => {
+        if (path.length === 0) return undefined;
+        let cur = findDeep(obj, path[0]);
+        for (const seg of path.slice(1)) {
+          if (cur === null || cur === undefined) return undefined;
+          if (Array.isArray(cur)) {
+            const idx = Number(seg);
+            cur = cur[isNaN(idx) ? 0 : idx];
+          } else {
+            cur = cur[seg];
+          }
+        }
+        return cur;
       };
 
       const TIME_FIELDS = new Set(["checkInDate", "checkOutDate", "requestTime", "createDate"]);
@@ -588,7 +643,10 @@ async function executeNodes(onlySelected = false) {
 
       for (const m of (cfg.extractMappings ?? [])) {
         if (!m.targetParamKey) continue;
-        const val = findDeep(resp, m.sourceField);
+        // dot-path fields (e.g. "bookingVo.orderId") use findAtPath; plain keys use findDeep
+        const val = m.sourceField.includes(".")
+          ? findAtPath(resp, m.sourceField.split("."))
+          : findDeep(resp, m.sourceField);
         if (val !== undefined && val !== null && val !== "") {
           const strVal = String(val);
           extracted[m.targetParamKey] = strVal;
@@ -660,6 +718,7 @@ async function executeNodes(onlySelected = false) {
         jcpResult: resp,
         uiLink: "",
         error: "",
+        requestParams: body,
         extractedParams: extracted,
       };
     } catch (err: unknown) {
@@ -671,11 +730,13 @@ async function executeNodes(onlySelected = false) {
         result: null,
         uiLink: "",
         error: String(err),
+        requestParams: body,
       };
     }
   }
 
   // Phase B: execute skynet_query nodes in parallel (dynamic values now include jcp extracted params)
+  const NODE_TIMEOUT_MS = 45_000;
 
   const promises = queryNodes.map(async (node) => {
     const start = Date.now();
@@ -705,10 +766,17 @@ async function executeNodes(onlySelected = false) {
       } : {}),
     } : { error: `未找到天网应用配置 (id=${cfg.skyAppId})` };
 
+    const timeoutPromise = new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error("请求超时（45s）")), NODE_TIMEOUT_MS)
+    );
+
     try {
       if (!skyApp) throw new Error(`未找到天网应用配置 (id=${cfg.skyAppId})`);
 
-      const result = await api.querySkynetLog(skyApp.appId, skyApp.token, queryParams);
+      const result = await Promise.race([api.querySkynetLog(skyApp.appId, skyApp.token, queryParams), timeoutPromise]);
+
+      // If a force-stop happened while we were awaiting, discard result.
+      if (execEpoch.value !== myEpoch) return;
 
       const uiLink = await api.generateSkynetUiLink(skyApp.appUk, {
         module: cfg.module,
@@ -721,6 +789,8 @@ async function executeNodes(onlySelected = false) {
         beginTime: timeFrom.value,
         endTime: timeTo.value,
       });
+
+      if (execEpoch.value !== myEpoch) return;
 
       const count = result?.result?.count ?? 0;
       const hasError = result?.result?.list?.some((item) => item.priority <= 1);
@@ -736,6 +806,7 @@ async function executeNodes(onlySelected = false) {
         requestParams: queryParams,
       };
     } catch (err: unknown) {
+      if (execEpoch.value !== myEpoch) return;
       execResults.value[node.id] = {
         nodeId: node.id,
         status: "error",
@@ -764,11 +835,39 @@ async function executeNodes(onlySelected = false) {
     });
 
   await Promise.allSettled(promises);
-  executing.value = false;
+  // Only clear executing flag if no force-stop happened after us.
+  if (execEpoch.value === myEpoch) executing.value = false;
 }
 
 function healthIcon(health: string) {
   return health === "ok" ? "🟢" : health === "warning" ? "🟡" : health === "error" ? "🔴" : "⚪";
+}
+
+async function openSkynetLink(node: TraceNode) {
+  // If already executed, reuse the stored link
+  if (execResults.value[node.id]?.uiLink) {
+    await openUrl(execResults.value[node.id].uiLink);
+    return;
+  }
+  const cfg = node.config as SkynetQueryConfig;
+  const skyApp = store.skyAppMap.get(cfg.skyAppId);
+  if (!skyApp) return;
+  try {
+    const uiLink = await api.generateSkynetUiLink(skyApp.appUk, {
+      module: cfg.module,
+      category: cfg.category,
+      subCategory: cfg.subCategory,
+      filter1: resolveField(cfg.filter1),
+      filter2: resolveField(cfg.filter2),
+      indexContext: resolveField(cfg.indexContext),
+      contextId: resolveField(cfg.contextId ?? { mode: "fixed", fixedValue: "", paramKey: "", templateValue: "" }),
+      beginTime: timeFrom.value,
+      endTime: timeTo.value,
+    });
+    await openUrl(uiLink);
+  } catch (e) {
+    console.warn("[openSkynetLink] failed:", e);
+  }
 }
 
 /** 刷新流程配置（不清空已填参数和执行结果） */
@@ -869,6 +968,120 @@ async function applySnippet(paramKey: string, value: string) {
     /* clipboard not available */
   }
 }
+
+// ── AI 流式调用辅助 ──
+
+marked.setOptions({ breaks: true, gfm: true });
+
+function renderMd(src: string): string {
+  if (!src) return "";
+  return marked.parse(src) as string;
+}
+
+async function streamAi(
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[],
+  onChunk: (s: string) => void,
+  onThinking?: (s: string) => void,
+): Promise<void> {
+  const sessionId = (crypto.randomUUID && crypto.randomUUID()) || `ai_${Date.now()}_${Math.random()}`;
+  const unlisteners: UnlistenFn[] = [];
+  return new Promise<void>(async (resolve, reject) => {
+    try {
+      unlisteners.push(await listen<string>(`ai:chunk:${sessionId}`, (e) => onChunk(String(e.payload ?? ""))));
+      if (onThinking) {
+        unlisteners.push(await listen<string>(`ai:thinking:${sessionId}`, (e) => onThinking(String(e.payload ?? ""))));
+      }
+      unlisteners.push(await listen<string>(`ai:done:${sessionId}`, () => {
+        unlisteners.forEach((u) => u());
+        resolve();
+      }));
+      unlisteners.push(await listen<string>(`ai:error:${sessionId}`, (e) => {
+        unlisteners.forEach((u) => u());
+        reject(new Error(String(e.payload ?? "AI 调用失败")));
+      }));
+      api.aiChatStream(sessionId, messages).catch((err) => {
+        unlisteners.forEach((u) => u());
+        reject(err);
+      });
+    } catch (err) {
+      unlisteners.forEach((u) => u());
+      reject(err);
+    }
+  });
+}
+
+async function runGlobalAi(promptOverride?: string) {
+  if (!flow.value) return;
+  if (!store.aiAvailable) {
+    globalAiError.value = "AI 未启用：请联系管理员开启远程 AI 配置";
+    return;
+  }
+  const userPrompt = (promptOverride ?? globalAiPrompt.value).trim();
+  if (!userPrompt) return;
+  globalAiPrompt.value = userPrompt;
+  globalAiResponse.value = "";
+  globalAiThinking.value = "";
+  globalAiError.value = "";
+  globalAiRunning.value = true;
+  try {
+    const messages = buildGlobalAnalysisMessages(
+      flow.value,
+      execResults.value,
+      dynamicValues.value,
+      userPrompt,
+      store.remoteConfig?.aiDefaultSystemPrompt,
+    );
+    await streamAi(messages, (c) => { globalAiResponse.value += c; }, (t) => { globalAiThinking.value += t; });
+  } catch (e: any) {
+    globalAiError.value = e?.message ?? String(e);
+  } finally {
+    globalAiRunning.value = false;
+  }
+}
+
+function openNodeAi(node: TraceNode) {
+  nodeAiTarget.value = node;
+  nodeAiPrompt.value = "";
+  nodeAiResponse.value = "";
+  nodeAiThinking.value = "";
+  nodeAiError.value = "";
+  showNodeAi.value = true;
+}
+
+async function runNodeAi(promptOverride?: string) {
+  if (!flow.value || !nodeAiTarget.value) return;
+  if (!store.aiAvailable) {
+    nodeAiError.value = "AI 未启用：请联系管理员开启远程 AI 配置";
+    return;
+  }
+  const node = nodeAiTarget.value;
+  const result = execResults.value[node.id];
+  if (!result) {
+    nodeAiError.value = "该节点尚未执行，请先运行后再分析";
+    return;
+  }
+  const userPrompt = (promptOverride ?? nodeAiPrompt.value).trim();
+  if (promptOverride) nodeAiPrompt.value = promptOverride;
+  nodeAiResponse.value = "";
+  nodeAiThinking.value = "";
+  nodeAiError.value = "";
+  nodeAiRunning.value = true;
+  try {
+    const messages = buildNodeAnalysisMessages(
+      flow.value,
+      node,
+      result,
+      dynamicValues.value,
+      userPrompt,
+      store.remoteConfig?.aiDefaultSystemPrompt,
+    );
+    await streamAi(messages, (c) => { nodeAiResponse.value += c; }, (t) => { nodeAiThinking.value += t; });
+  } catch (e: any) {
+    nodeAiError.value = e?.message ?? String(e);
+  } finally {
+    nodeAiRunning.value = false;
+  }
+}
 </script>
 
 <template>
@@ -912,22 +1125,20 @@ async function applySnippet(paramKey: string, value: string) {
 
     <!-- 执行模式 -->
     <div v-if="activeTab === 'execute'" class="flex-1 overflow-y-auto p-6">
+      <!-- AI 提示词只读提示 -->
+      <div v-if="flow.aiPrompt?.trim() || flow.nodes.some(n => n.aiPrompt?.trim())" class="bg-violet-50/50 rounded-xl border border-violet-200/60 px-4 py-2.5 mb-4 flex items-start gap-2">
+        <span class="text-violet-500 shrink-0 text-sm mt-0.5">✨</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium text-violet-600">已配置 AI 提示词</span>
+            <span v-if="flow.aiPrompt?.trim()" class="text-[10px] px-1.5 py-0.5 bg-violet-100 text-violet-500 rounded">流程级</span>
+            <span v-if="flow.nodes.some(n => n.aiPrompt?.trim())" class="text-[10px] px-1.5 py-0.5 bg-violet-100 text-violet-500 rounded">{{ flow.nodes.filter(n => n.aiPrompt?.trim()).length }} 个节点</span>
+          </div>
+          <p v-if="!flow.aiHintCollapsed && flow.aiPrompt?.trim()" class="text-xs text-text-secondary mt-1 line-clamp-2">{{ flow.aiPrompt }}</p>
+        </div>
+      </div>
       <!-- 动态参数 + 时间 -->
       <div class="bg-surface rounded-xl border border-border p-4 mb-6 space-y-4">
-        <!-- JCP 运行时查询维度选择 -->
-        <div v-if="flow.nodes.some(n => n.type === 'jcp_order' && (n.config as JcpOrderConfig).queryField === 'runtime')" class="flex flex-wrap gap-4">
-          <div v-for="node in flow.nodes.filter(n => n.type === 'jcp_order' && (n.config as JcpOrderConfig).queryField === 'runtime')" :key="'jcp-field-' + node.id" class="flex items-center gap-2 text-sm">
-            <span class="text-xs text-text-secondary shrink-0">{{ node.label }} 查询维度</span>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="radio" :value="'traceId'" v-model="jcpQueryFieldOverrides[node.id]" class="accent-primary" />
-              <span class="text-xs">traceId</span>
-            </label>
-            <label class="flex items-center gap-1 cursor-pointer">
-              <input type="radio" :value="'orderId'" v-model="jcpQueryFieldOverrides[node.id]" class="accent-primary" />
-              <span class="text-xs">orderId</span>
-            </label>
-          </div>
-        </div>
         <div v-if="flow.dynamicParams.filter(p => !p.hidden).length > 0" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           <div v-for="param in flow.dynamicParams.filter(p => !p.hidden)" :key="param.key" class="min-w-0 transition-opacity" :class="{ 'opacity-35 pointer-events-none': activeParamKeys && !activeParamKeys.has(param.key) }">
             <label class="block text-xs text-text-secondary mb-1 truncate" :title="param.label">
@@ -1042,6 +1253,12 @@ async function applySnippet(paramKey: string, value: string) {
             @click="executeNodes(false)"
           >{{ executing ? '执行中...' : '▶ 全部执行' }}</button>
           <button
+            v-if="executing"
+            class="px-4 py-2.5 border border-red-300 text-red-500 rounded-lg hover:bg-red-50 transition-colors font-medium text-sm"
+            title="强制停止当前执行"
+            @click="forceStopExecution"
+          >⏹ 停止</button>
+          <button
             class="px-5 py-2.5 border border-primary text-primary rounded-lg hover:bg-blue-50 transition-colors disabled:opacity-50 font-medium text-sm"
             :disabled="executing || selectedNodeIds.size === 0"
             @click="executeNodes(true)"
@@ -1059,7 +1276,6 @@ async function applySnippet(paramKey: string, value: string) {
             <button
               v-if="!store.snapshotMode"
               class="px-3 py-1.5 text-xs border border-border text-text-secondary rounded-lg hover:border-primary hover:text-primary transition-colors"
-              :disabled="executing"
               title="刷新节点配置，不清空已填参数"
               @click="refreshFlow"
             >↻ 刷新</button>
@@ -1138,6 +1354,13 @@ async function applySnippet(paramKey: string, value: string) {
               <div class="flex items-center gap-2 text-xs text-text-secondary">
                 <span v-if="execResults[node.id]?.durationMs">{{ execResults[node.id].durationMs }}ms</span>
                 <a v-if="execResults[node.id]?.uiLink && !(store.snapshotMode && store.snapshotRestrictions.hideUiLink)" :href="execResults[node.id].uiLink" target="_blank" class="text-primary hover:underline">天网UI ↗</a>
+                <button v-else-if="node.type === 'skynet_query' && !(store.snapshotMode && store.snapshotRestrictions.hideUiLink)" class="text-primary hover:underline" @click.stop="openSkynetLink(node)">天网UI ↗</button>
+                <button
+                  v-if="execResults[node.id]?.status === 'success' && store.aiAvailable"
+                  class="text-violet-500 hover:text-violet-700 hover:underline"
+                  title="基于该节点结果让 AI 解读"
+                  @click.stop="openNodeAi(node)"
+                >✨ AI 解读</button>
               </div>
             </div>
             <div v-if="nodeParamMap.get(node.id)?.length" class="mt-1.5 flex flex-wrap gap-1">
@@ -1236,6 +1459,43 @@ async function applySnippet(paramKey: string, value: string) {
 
     <!-- 编排模式 -->
     <div v-else class="flex-1 overflow-y-auto p-6">
+      <!-- 流程级 AI 提示词 -->
+      <div class="bg-surface rounded-xl border border-violet-200 p-4 mb-6">
+        <div class="flex items-center justify-between mb-2">
+          <h3 class="font-medium text-sm">
+            <span class="text-violet-600">✨ 流程级 AI 提示词</span>
+            <span class="text-xs text-text-secondary font-normal ml-2">（AI 全局/节点分析时作为整体业务上下文）</span>
+          </h3>
+          <label class="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer select-none" title="关闭后执行界面仅显示摘要，不展示提示词具体内容">
+            <input type="checkbox" :checked="!flow.aiHintCollapsed" class="rounded accent-violet-500" @change="flow.aiHintCollapsed = !flow.aiHintCollapsed; persistFlow()" />
+            <span>执行界面展示详情</span>
+          </label>
+        </div>
+        <textarea
+          v-model="flow.aiPrompt"
+          rows="3"
+          placeholder="例如：本流程用于排查铂涛 Mapping 不生效问题，关注 priority<=1 的日志、确认 hotelId 是否成功映射等..."
+          class="w-full px-3 py-2 border border-violet-200 rounded-lg text-sm outline-none focus:border-violet-400 resize-none"
+          @blur="persistFlow"
+        />
+        <div class="mt-3">
+          <label class="block text-xs text-violet-600 font-medium mb-1.5">全局 AI 快捷问题</label>
+          <p class="text-[10px] text-text-secondary mb-2">自定义「AI 全局分析」弹窗中的快捷按钮，留空则使用默认</p>
+          <div class="space-y-1.5">
+            <div v-for="(_, i) in (flow.aiQuickActions ?? [])" :key="i" class="flex items-center gap-1.5">
+              <input
+                v-model="flow.aiQuickActions![i]"
+                class="flex-1 px-2 py-1 text-xs border border-violet-200 rounded outline-none focus:border-violet-400"
+                placeholder="快捷问题文本"
+                @blur="persistFlow"
+              />
+              <button class="text-error text-sm px-1" @click="flow.aiQuickActions!.splice(i, 1); persistFlow()">×</button>
+            </div>
+          </div>
+          <button class="mt-1.5 text-xs text-violet-500 hover:underline" @click="if (!flow.aiQuickActions) flow.aiQuickActions = []; flow.aiQuickActions.push('')">+ 添加快捷问题</button>
+        </div>
+      </div>
+
       <!-- 动态参数管理 -->
       <div class="bg-surface rounded-xl border border-border p-4 mb-6">
         <div class="flex items-center justify-between mb-3">
@@ -1499,10 +1759,11 @@ async function applySnippet(paramKey: string, value: string) {
 
             <div class="flex flex-wrap gap-1.5">
               <button
-                v-for="preset in ['全链路异常分析', '各节点健康度评估', '排查建议', '错误日志汇总']"
+                v-for="preset in (flow?.aiQuickActions?.length ? flow.aiQuickActions : ['全链路异常分析', '各节点健康度评估', '排查建议', '错误日志汇总'])"
                 :key="preset"
-                class="text-xs px-3 py-1.5 rounded-full border border-violet-200 text-violet-600 hover:bg-violet-100 transition-colors"
-                @click="globalAiPrompt = preset; globalAiResponse = '功能开发中，AI 模型即将接入...'"
+                class="text-xs px-3 py-1.5 rounded-full border border-violet-200 text-violet-600 hover:bg-violet-100 transition-colors disabled:opacity-50"
+                :disabled="globalAiRunning"
+                @click="runGlobalAi(preset)"
               >{{ preset }}</button>
             </div>
 
@@ -1511,21 +1772,106 @@ async function applySnippet(paramKey: string, value: string) {
                 v-model="globalAiPrompt"
                 placeholder="描述分析需求：如「分析全链路是否有异常，给出排查建议」"
                 class="flex-1 px-3 py-2 text-sm border border-violet-200 rounded-lg outline-none focus:border-violet-400"
-                @keydown.enter="globalAiResponse = '功能开发中，AI 模型即将接入...'"
+                :disabled="globalAiRunning"
+                @keydown.enter="runGlobalAi()"
               />
               <button
                 class="px-4 py-2 text-sm bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-colors disabled:opacity-50"
-                :disabled="!globalAiPrompt.trim()"
-                @click="globalAiResponse = '功能开发中，AI 模型即将接入...'"
-              >分析</button>
+                :disabled="!globalAiPrompt.trim() || globalAiRunning"
+                @click="runGlobalAi()"
+              >{{ globalAiRunning ? '分析中…' : '分析' }}</button>
             </div>
 
-            <div v-if="globalAiResponse" class="px-4 py-3 bg-white border border-violet-200/50 rounded-lg text-sm text-text-secondary leading-relaxed">
+            <div v-if="!store.aiAvailable" class="px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+              AI 未启用：请联系管理员在远程配置中开启 AI（base url / token / model）。
+            </div>
+
+            <div v-if="globalAiError" class="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
+              {{ globalAiError }}
+            </div>
+
+            <div v-if="globalAiThinking || globalAiResponse || globalAiRunning" class="px-4 py-3 bg-white border border-violet-200/50 rounded-lg text-sm text-text-secondary leading-relaxed">
+              <details v-if="globalAiThinking" class="mb-3" :open="!globalAiResponse">
+                <summary class="cursor-pointer text-xs text-violet-500 font-medium select-none flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-violet-300" :class="{ 'animate-pulse': globalAiRunning && !globalAiResponse }" />
+                  思考过程
+                  <span class="text-[10px] text-text-secondary font-normal ml-1">{{ globalAiThinking.length }} 字</span>
+                </summary>
+                <div class="mt-2 pl-3 border-l-2 border-violet-100 text-xs text-text-secondary/70 max-h-40 overflow-y-auto ai-markdown" v-html="renderMd(globalAiThinking)" />
+              </details>
               <div class="flex items-center gap-1.5 mb-2">
-                <span class="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
+                <span class="w-2 h-2 rounded-full bg-violet-400" :class="{ 'animate-pulse': globalAiRunning }" />
                 <span class="text-violet-600 text-xs font-medium">AI 回复</span>
               </div>
-              {{ globalAiResponse }}
+              <div v-if="globalAiResponse" class="ai-markdown" v-html="renderMd(globalAiResponse)" />
+              <span v-else-if="globalAiThinking && globalAiRunning" class="text-text-secondary/50">正在思考…</span>
+              <span v-else class="text-text-secondary/50">等待响应…</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI 节点解读弹窗 -->
+      <div
+        v-if="showNodeAi && nodeAiTarget"
+        class="fixed inset-0 bg-black/40 flex items-center justify-center z-50"
+        @click.self="showNodeAi = false"
+      >
+        <div class="bg-surface rounded-xl shadow-xl w-[640px] max-h-[80vh] overflow-y-auto">
+          <div class="px-6 py-4 border-b border-border flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <h3 class="text-lg font-semibold text-violet-700">✨ AI 节点解读</h3>
+              <span class="text-xs text-text-secondary">{{ nodeAiTarget.label }}</span>
+            </div>
+            <button class="text-text-secondary hover:text-text" @click="showNodeAi = false">✕</button>
+          </div>
+          <div class="px-6 py-4 space-y-4">
+            <div v-if="!flow.aiHintCollapsed && nodeAiTarget.aiPrompt" class="bg-violet-50/50 rounded-lg p-3 text-xs text-text-secondary whitespace-pre-wrap">
+              <div class="font-medium text-violet-700 mb-1">节点提示词</div>
+              {{ nodeAiTarget.aiPrompt }}
+            </div>
+            <div class="flex flex-wrap gap-1.5">
+              <button
+                v-for="preset in (nodeAiTarget.aiQuickActions?.length ? nodeAiTarget.aiQuickActions : ['判断该节点是否异常', '总结关键日志', '可能的根因'])"
+                :key="preset"
+                class="text-xs px-3 py-1.5 rounded-full border border-violet-200 text-violet-600 hover:bg-violet-100 transition-colors disabled:opacity-50"
+                :disabled="nodeAiRunning"
+                @click="runNodeAi(preset)"
+              >{{ preset }}</button>
+            </div>
+            <div class="flex gap-2">
+              <input
+                v-model="nodeAiPrompt"
+                placeholder="例如：这个节点的错误日志说明了什么？"
+                class="flex-1 px-3 py-2 text-sm border border-violet-200 rounded-lg outline-none focus:border-violet-400"
+                :disabled="nodeAiRunning"
+                @keydown.enter="runNodeAi()"
+              />
+              <button
+                class="px-4 py-2 text-sm bg-violet-500 text-white rounded-lg hover:bg-violet-600 transition-colors disabled:opacity-50"
+                :disabled="nodeAiRunning"
+                @click="runNodeAi()"
+              >{{ nodeAiRunning ? '分析中…' : '分析' }}</button>
+            </div>
+            <div v-if="nodeAiError" class="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-600">
+              {{ nodeAiError }}
+            </div>
+            <div v-if="nodeAiThinking || nodeAiResponse || nodeAiRunning" class="px-4 py-3 bg-white border border-violet-200/50 rounded-lg text-sm text-text-secondary leading-relaxed">
+              <details v-if="nodeAiThinking" class="mb-3" :open="!nodeAiResponse">
+                <summary class="cursor-pointer text-xs text-violet-500 font-medium select-none flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-violet-300" :class="{ 'animate-pulse': nodeAiRunning && !nodeAiResponse }" />
+                  思考过程
+                  <span class="text-[10px] text-text-secondary font-normal ml-1">{{ nodeAiThinking.length }} 字</span>
+                </summary>
+                <div class="mt-2 pl-3 border-l-2 border-violet-100 text-xs text-text-secondary/70 max-h-40 overflow-y-auto ai-markdown" v-html="renderMd(nodeAiThinking)" />
+              </details>
+              <div class="flex items-center gap-1.5 mb-2">
+                <span class="w-2 h-2 rounded-full bg-violet-400" :class="{ 'animate-pulse': nodeAiRunning }" />
+                <span class="text-violet-600 text-xs font-medium">AI 回复</span>
+              </div>
+              <div v-if="nodeAiResponse" class="ai-markdown" v-html="renderMd(nodeAiResponse)" />
+              <span v-else-if="nodeAiThinking && nodeAiRunning" class="text-text-secondary/50">正在思考…</span>
+              <span v-else class="text-text-secondary/50">等待响应…</span>
             </div>
           </div>
         </div>

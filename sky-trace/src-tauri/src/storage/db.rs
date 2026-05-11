@@ -107,6 +107,15 @@ impl Database {
         if !has_col("trace_flow", "node_groups") {
             conn.execute_batch("ALTER TABLE trace_flow ADD COLUMN node_groups TEXT NOT NULL DEFAULT '[]';")?;
         }
+        if !has_col("trace_flow", "ai_prompt") {
+            conn.execute_batch("ALTER TABLE trace_flow ADD COLUMN ai_prompt TEXT;")?;
+        }
+        if !has_col("trace_flow", "ai_quick_actions") {
+            conn.execute_batch("ALTER TABLE trace_flow ADD COLUMN ai_quick_actions TEXT;")?;
+        }
+        if !has_col("trace_flow", "ai_hint_collapsed") {
+            conn.execute_batch("ALTER TABLE trace_flow ADD COLUMN ai_hint_collapsed INTEGER NOT NULL DEFAULT 0;")?;
+        }
         Ok(())
     }
 
@@ -239,12 +248,12 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let (sql, filter_val) = match supplier_id {
             Some(sid) => (
-                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
+                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at, ai_prompt, ai_quick_actions, ai_hint_collapsed
                  FROM trace_flow WHERE supplier_id = ?1 AND deleted_at IS NULL ORDER BY sort_order DESC, id DESC",
                 Some(sid),
             ),
             None => (
-                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
+                "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at, ai_prompt, ai_quick_actions, ai_hint_collapsed
                  FROM trace_flow WHERE deleted_at IS NULL ORDER BY sort_order DESC, id DESC",
                 None,
             ),
@@ -262,7 +271,7 @@ impl Database {
     pub fn get_flow(&self, id: i64) -> Result<TraceFlow, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
+            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at, ai_prompt, ai_quick_actions, ai_hint_collapsed
              FROM trace_flow WHERE id = ?1",
             params![id],
             Self::map_flow,
@@ -277,19 +286,21 @@ impl Database {
         let groups_json = serde_json::to_string(&input.node_groups).unwrap_or_default();
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
+        let ai_quick_json = input.ai_quick_actions.as_ref().map(|v| serde_json::to_string(v).unwrap_or_default());
+
         if let Some(id) = input.id {
             conn.execute(
-                "UPDATE trace_flow SET name=?1, description=?2, supplier_id=?3, tags=?4, dynamic_params=?5, nodes=?6, node_groups=?7, updated_at=?8 WHERE id=?9",
-                params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, groups_json, now, id],
+                "UPDATE trace_flow SET name=?1, description=?2, supplier_id=?3, tags=?4, dynamic_params=?5, nodes=?6, node_groups=?7, updated_at=?8, ai_prompt=?9, ai_quick_actions=?10, ai_hint_collapsed=?11 WHERE id=?12",
+                params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, groups_json, now, input.ai_prompt, ai_quick_json, input.ai_hint_collapsed, id],
             )?;
             drop(conn);
             return self.get_flow(id);
         }
 
         conn.execute(
-            "INSERT INTO trace_flow (name, description, supplier_id, tags, dynamic_params, nodes, node_groups, created_at, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-            params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, groups_json, now],
+            "INSERT INTO trace_flow (name, description, supplier_id, tags, dynamic_params, nodes, node_groups, created_at, updated_at, ai_prompt, ai_quick_actions, ai_hint_collapsed)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9, ?10, ?11)",
+            params![input.name, input.description, input.supplier_id, tags_json, params_json, nodes_json, groups_json, now, input.ai_prompt, ai_quick_json, input.ai_hint_collapsed],
         )?;
         let id = conn.last_insert_rowid();
         drop(conn);
@@ -306,7 +317,7 @@ impl Database {
     pub fn get_deleted_flows(&self) -> Result<Vec<TraceFlow>, rusqlite::Error> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at
+            "SELECT id, name, description, supplier_id, tags, is_favorite, sort_order, dynamic_params, nodes, node_groups, created_at, updated_at, ai_prompt, ai_quick_actions, ai_hint_collapsed
              FROM trace_flow WHERE deleted_at IS NOT NULL ORDER BY deleted_at DESC",
         )?;
         let rows = stmt.query_map([], Self::map_flow)?;
@@ -346,6 +357,9 @@ impl Database {
             dynamic_params: original.dynamic_params,
             nodes: original.nodes,
             node_groups: original.node_groups,
+            ai_prompt: original.ai_prompt,
+            ai_quick_actions: original.ai_quick_actions,
+            ai_hint_collapsed: original.ai_hint_collapsed,
         };
         self.save_flow(input)
     }
@@ -556,6 +570,11 @@ impl Database {
             node_groups: serde_json::from_str(&groups_str).unwrap_or_default(),
             created_at: row.get(10)?,
             updated_at: row.get(11)?,
+            ai_prompt: row.get::<_, Option<String>>(12).unwrap_or(None),
+            ai_quick_actions: row.get::<_, Option<String>>(13)
+                .unwrap_or(None)
+                .and_then(|s| serde_json::from_str(&s).ok()),
+            ai_hint_collapsed: row.get::<_, i64>(14).unwrap_or(0) != 0,
         })
     }
 }

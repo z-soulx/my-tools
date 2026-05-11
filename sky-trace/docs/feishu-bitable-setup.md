@@ -46,6 +46,11 @@
 | `features` | **文本** | JSON 格式的功能开关（见下方说明） |
 | `announcement_text` | **文本** | 公告内容。留空则不显示公告 |
 | `announcement_type` | **单选** | 公告级别。添加三个选项：`info`、`warning`、`error` |
+| `ai_enabled` | **复选框** | AI 分析总开关。取消勾选则所有客户端 AI 按钮灰化 |
+| `ai_base_url` | **文本** | OpenAI 兼容接口地址，如 `https://api.openai.com/v1` |
+| `ai_token` | **文本** | API Bearer Token（仅驻留 Rust 进程内存，不持久化） |
+| `ai_model` | **文本** | 模型名称，如 `gpt-4o-mini`、`qwen-plus` |
+| `ai_default_system_prompt` | **文本** | 全局默认 system prompt（可选，留空使用内置默认） |
 
 ### 如何设置字段类型
 
@@ -81,6 +86,11 @@
 | features | `{"skynetQuery":true,"snapshotExport":true,"snapshotImport":true,"checklistEdit":true,"recoveryEdit":true,"trashAccess":true}` |
 | announcement_text | （留空 = 无公告） |
 | announcement_type | （留空或选 `info`） |
+| ai_enabled | **勾选** (true) |
+| ai_base_url | 你的 OpenAI 兼容接口地址 |
+| ai_token | 你的 API Token |
+| ai_model | `gpt-4o-mini`（或其他模型名） |
+| ai_default_system_prompt | （留空使用内置默认） |
 
 ---
 

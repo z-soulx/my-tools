@@ -14,6 +14,8 @@ import type {
   SnapshotRestrictions,
   RemoteConfig,
   NodeGroup,
+  AiStatus,
+  ChatMessage,
 } from "@/types";
 
 export async function getSkyApps(): Promise<SkyApp[]> {
@@ -61,6 +63,9 @@ export async function saveFlow(flow: {
   dynamicParams: DynamicParam[];
   nodes: TraceNode[];
   nodeGroups?: NodeGroup[];
+  aiPrompt?: string | null;
+  aiQuickActions?: string[] | null;
+  aiHintCollapsed?: boolean;
 }): Promise<TraceFlow> {
   return invoke("save_flow", { flow });
 }
@@ -219,4 +224,17 @@ export async function querySupplierMapping(
   body: { from: string; logId: string; realRequest: { elongHotelId: string; elongRoomId: string; elongRateplanId: string } }
 ): Promise<any> {
   return invoke("query_supplier_mapping", { body });
+}
+
+// ── AI ──
+
+export async function aiStatus(): Promise<AiStatus> {
+  return invoke("ai_status");
+}
+
+export async function aiChatStream(
+  sessionId: string,
+  messages: ChatMessage[],
+): Promise<void> {
+  return invoke("ai_chat_stream", { sessionId, messages });
 }
