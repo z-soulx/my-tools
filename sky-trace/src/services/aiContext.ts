@@ -6,11 +6,12 @@ import type {
 } from "@/types";
 
 const MAX_LOGS_PER_NODE = 30;
-const MAX_MSG_LEN = 500;
+const MAX_MSG_LEN = 2000;
 
-function truncate(s: string, max = MAX_MSG_LEN): string {
-  if (!s) return "";
-  return s.length > max ? s.slice(0, max) + "…" : s;
+function smartTruncate(s: string, max = MAX_MSG_LEN): string {
+  if (s.length <= max) return s;
+  const keep = Math.floor((max - 30) / 2);
+  return `${s.slice(0, keep)}…[省略${s.length - keep * 2}字符]…${s.slice(-keep)}`;
 }
 
 function summarizeSkynetResult(result: NodeExecResult) {
@@ -21,7 +22,7 @@ function summarizeSkynetResult(result: NodeExecResult) {
     priority: it.priority,
     filter1: it.filter1,
     filter2: it.filter2,
-    msg: truncate(String(it.msg ?? "")),
+    msg: smartTruncate(String(it.msg ?? "")),
   }));
   return { total, sampledCount: trimmed.length, items: trimmed };
 }
@@ -29,7 +30,10 @@ function summarizeSkynetResult(result: NodeExecResult) {
 function summarizeJcpResult(result: NodeExecResult) {
   const r = result.jcpResult;
   if (!r) return null;
-  return truncate(JSON.stringify(r), 2000);
+  const s = JSON.stringify(r);
+  if (s.length <= 8000) return r;
+  // JCP 结果过大时，返回字符串摘要而非对象（避免截断 JSON 破坏结构）
+  return `[JCP结果已截断，原始大小${s.length}字符] ${s.slice(0, 7000)}…`;
 }
 
 function summarizeNodeResult(node: TraceNode, result?: NodeExecResult) {
@@ -41,7 +45,7 @@ function summarizeNodeResult(node: TraceNode, result?: NodeExecResult) {
     health: result.health,
     durationMs: result.durationMs,
   };
-  if (result.error) base.error = truncate(result.error);
+  if (result.error) base.error = smartTruncate(result.error, 500);
   if (result.requestParams) base.requestParams = result.requestParams;
   if (result.extractedParams) base.extractedParams = result.extractedParams;
   if (node.type === "skynet_query") {
@@ -114,7 +118,7 @@ export function buildGlobalAnalysisMessages(
     { role: "system", content: system },
     {
       role: "user",
-      content: `【实际执行数据】\n\`\`\`json\n${JSON.stringify(dataPayload, null, 2)}\n\`\`\`\n\n【分析需求】\n${userPrompt}`,
+      content: `【实际执行数据】\n\`\`\`json\n${JSON.stringify(dataPayload)}\n\`\`\`\n\n【分析需求】\n${userPrompt}`,
     },
   ];
 }
@@ -142,7 +146,7 @@ export function buildNodeAnalysisMessages(
     { role: "system", content: system },
     {
       role: "user",
-      content: `【该节点执行数据】\n\`\`\`json\n${JSON.stringify(dataPayload, null, 2)}\n\`\`\`\n\n【分析需求】\n${ask}`,
+      content: `【该节点执行数据】\n\`\`\`json\n${JSON.stringify(dataPayload)}\n\`\`\`\n\n【分析需求】\n${ask}`,
     },
   ];
 }

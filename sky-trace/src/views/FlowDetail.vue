@@ -1791,21 +1791,21 @@ async function runNodeAi(promptOverride?: string) {
             </div>
 
             <div v-if="globalAiThinking || globalAiResponse || globalAiRunning" class="px-4 py-3 bg-white border border-violet-200/50 rounded-lg text-sm text-text-secondary leading-relaxed">
-              <details v-if="globalAiThinking" class="mb-3" :open="!globalAiResponse">
+              <details v-if="globalAiThinking || (globalAiRunning && !globalAiResponse)" class="mb-3" :open="!globalAiResponse">
                 <summary class="cursor-pointer text-xs text-violet-500 font-medium select-none flex items-center gap-1.5">
                   <span class="w-1.5 h-1.5 rounded-full bg-violet-300" :class="{ 'animate-pulse': globalAiRunning && !globalAiResponse }" />
                   思考过程
-                  <span class="text-[10px] text-text-secondary font-normal ml-1">{{ globalAiThinking.length }} 字</span>
+                  <span v-if="globalAiThinking" class="text-[10px] text-text-secondary font-normal ml-1">{{ globalAiThinking.length }} 字</span>
                 </summary>
-                <div class="mt-2 pl-3 border-l-2 border-violet-100 text-xs text-text-secondary/70 max-h-40 overflow-y-auto ai-markdown" v-html="renderMd(globalAiThinking)" />
+                <div v-if="globalAiThinking" class="mt-2 pl-3 border-l-2 border-violet-100 text-xs text-text-secondary/70 max-h-40 overflow-y-auto ai-markdown" v-html="renderMd(globalAiThinking)" />
+                <span v-else class="mt-2 block pl-3 text-xs text-text-secondary/50 animate-pulse">正在思考中…</span>
               </details>
               <div class="flex items-center gap-1.5 mb-2">
                 <span class="w-2 h-2 rounded-full bg-violet-400" :class="{ 'animate-pulse': globalAiRunning }" />
                 <span class="text-violet-600 text-xs font-medium">AI 回复</span>
               </div>
               <div v-if="globalAiResponse" class="ai-markdown" v-html="renderMd(globalAiResponse)" />
-              <span v-else-if="globalAiThinking && globalAiRunning" class="text-text-secondary/50">正在思考…</span>
-              <span v-else class="text-text-secondary/50">等待响应…</span>
+              <span v-else class="text-text-secondary/50">等待回复…</span>
             </div>
           </div>
         </div>
@@ -1857,21 +1857,21 @@ async function runNodeAi(promptOverride?: string) {
               {{ nodeAiError }}
             </div>
             <div v-if="nodeAiThinking || nodeAiResponse || nodeAiRunning" class="px-4 py-3 bg-white border border-violet-200/50 rounded-lg text-sm text-text-secondary leading-relaxed">
-              <details v-if="nodeAiThinking" class="mb-3" :open="!nodeAiResponse">
+              <details v-if="nodeAiThinking || (nodeAiRunning && !nodeAiResponse)" class="mb-3" :open="!nodeAiResponse">
                 <summary class="cursor-pointer text-xs text-violet-500 font-medium select-none flex items-center gap-1.5">
                   <span class="w-1.5 h-1.5 rounded-full bg-violet-300" :class="{ 'animate-pulse': nodeAiRunning && !nodeAiResponse }" />
                   思考过程
-                  <span class="text-[10px] text-text-secondary font-normal ml-1">{{ nodeAiThinking.length }} 字</span>
+                  <span v-if="nodeAiThinking" class="text-[10px] text-text-secondary font-normal ml-1">{{ nodeAiThinking.length }} 字</span>
                 </summary>
-                <div class="mt-2 pl-3 border-l-2 border-violet-100 text-xs text-text-secondary/70 max-h-40 overflow-y-auto ai-markdown" v-html="renderMd(nodeAiThinking)" />
+                <div v-if="nodeAiThinking" class="mt-2 pl-3 border-l-2 border-violet-100 text-xs text-text-secondary/70 max-h-40 overflow-y-auto ai-markdown" v-html="renderMd(nodeAiThinking)" />
+                <span v-else class="mt-2 block pl-3 text-xs text-text-secondary/50 animate-pulse">正在思考中…</span>
               </details>
               <div class="flex items-center gap-1.5 mb-2">
                 <span class="w-2 h-2 rounded-full bg-violet-400" :class="{ 'animate-pulse': nodeAiRunning }" />
                 <span class="text-violet-600 text-xs font-medium">AI 回复</span>
               </div>
               <div v-if="nodeAiResponse" class="ai-markdown" v-html="renderMd(nodeAiResponse)" />
-              <span v-else-if="nodeAiThinking && nodeAiRunning" class="text-text-secondary/50">正在思考…</span>
-              <span v-else class="text-text-secondary/50">等待响应…</span>
+              <span v-else class="text-text-secondary/50">等待回复…</span>
             </div>
           </div>
         </div>

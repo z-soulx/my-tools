@@ -1,9 +1,23 @@
 use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::sync::OnceLock;
 use tauri::{AppHandle, Emitter};
 
 use super::config;
+
+static HTTP_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+
+fn get_http_client() -> &'static reqwest::Client {
+    HTTP_CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(120))
+            .no_proxy()
+            .build()
+            .expect("Failed to build HTTP client")
+    })
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -62,22 +76,19 @@ pub async fn chat_stream(
     });
 
     #[cfg(debug_assertions)]
-    eprintln!("[AI] 请求 URL: {}", url);
-    #[cfg(debug_assertions)]
-    eprintln!("[AI] 请求体: {}", serde_json::to_string_pretty(&body).unwrap_or_default());
+    {
+        let total_chars: usize = messages.iter().map(|m| m.content.len()).sum();
+        eprintln!("[AI] 请求 URL: {}", url);
+        eprintln!("[AI] payload 总字符数: {} ({:.1} KB)", total_chars, total_chars as f64 / 1024.0);
+    }
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("HTTP 客户端初始化失败: {}", e))?;
-
-    let resp = client
+    let resp = get_http_client()
         .post(&url)
         .header("Authorization", format!("Bearer {}", cfg.token))
         .header("Content-Type", "application/json")
         .header("Accept", "text/event-stream")
         .header("Cache-Control", "no-cache")
+        .header("Accept-Encoding", "identity")
         .json(&body)
         .send()
         .await
@@ -92,7 +103,7 @@ pub async fn chat_stream(
     }
 
     #[cfg(debug_assertions)]
-    eprintln!("[AI] 响应状态: {} — 开始读取流", resp.status().as_u16());
+    eprintln!("[AI] 响应状态: {} — 开始读取流 (Content-Encoding: {:?})", resp.status().as_u16(), resp.headers().get("content-encoding"));
 
     let chunk_event = format!("ai:chunk:{}", session_id);
     let thinking_event = format!("ai:thinking:{}", session_id);
